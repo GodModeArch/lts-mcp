@@ -2,6 +2,7 @@
 
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-88_passed-brightgreen?logo=vitest&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 
 A [Model Context Protocol](https://modelcontextprotocol.io/) server that provides Philippine License to Sell (LTS) verification data to LLMs. Built on Cloudflare Workers with Supabase.
@@ -166,6 +167,15 @@ npm run dev
 `cf-typegen` generates `worker-configuration.d.ts` (gitignored) with Cloudflare runtime types. Run it once after cloning and again after changing `wrangler.jsonc`.
 
 Dev server starts at `http://localhost:8787`. Connect your MCP client to `http://localhost:8787/mcp`.
+
+### Testing
+
+```bash
+npm test            # run all tests
+npm run test:watch  # watch mode
+```
+
+88 tests across 4 suites covering sanitization (PostgREST filter injection), utility functions, response formatting, and query logic with mock Supabase clients.
 
 ### Deployment
 

@@ -2,7 +2,7 @@ import type { SupabaseClient } from "./client";
 import { getTodayPH, getFutureDatePH } from "../utils";
 
 /** Escape characters that PostgREST interprets as filter syntax inside .or() strings */
-function sanitizeFilterValue(value: string): string {
+export function sanitizeFilterValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/,/g, "\\,");
 }
 
