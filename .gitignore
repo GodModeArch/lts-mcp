@@ -1,0 +1,8 @@
+node_modules/
+build/
+.env
+*.Zone.Identifier
+.wrangler/
+.dev.vars
+.claude/
+worker-configuration.d.ts

@@ -1,0 +1,14 @@
+{
+  "name": "lts-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "migrations": [{ "new_sqlite_classes": ["LtsMCP"], "tag": "v1" }],
+  "durable_objects": {
+    "bindings": [{ "class_name": "LtsMCP", "name": "MCP_OBJECT" }]
+  },
+  "vars": {
+    "LAST_SYNCED": "2026-03-04"
+  },
+  "observability": { "enabled": true }
+}
