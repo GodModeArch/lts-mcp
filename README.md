@@ -97,7 +97,7 @@ Add to your MCP client configuration:
 {
   "mcpServers": {
     "lts": {
-      "url": "https://lts-mcp.godmodearch.workers.dev/mcp"
+      "url": "https://lts.godmode.ph/mcp"
     }
   }
 }
@@ -105,7 +105,7 @@ Add to your MCP client configuration:
 
 ### Quick test
 ```bash
-curl -X POST https://lts-mcp.godmodearch.workers.dev/mcp \
+curl -X POST https://lts.godmode.ph/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
