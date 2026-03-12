@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "description": "MCP server providing Philippine License to Sell (LTS) verification data to AI agents. Built on Cloudflare Workers with Supabase. Data sourced from DHSUD.",
-  "author": "Aaron Zara <aaron@godmode.ph>",
+  "author": "Aaron Zara <aaron.zara@godmode.ph>",
   "license": "MIT",
   "homepage": "https://godmode.ph",
   "repository": {
