@@ -1,8 +1,25 @@
 {
-  "name": "lts-mcp",
+  "name": "@aaronzara/lts-mcp",
+  "private": false,
   "version": "1.0.0",
   "type": "module",
-  "description": "MCP server for REN.PH License to Sell (LTS) data - DHSUD verification",
+  "description": "MCP server providing Philippine License to Sell (LTS) verification data to AI agents. Built on Cloudflare Workers with Supabase. Data sourced from DHSUD.",
+  "author": "Aaron Zara <aaron@godmode.ph>",
+  "license": "MIT",
+  "homepage": "https://godmode.ph",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GodModeArch/lts-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "philippines",
+    "license-to-sell",
+    "lts",
+    "dhsud",
+    "real-estate",
+    "cloudflare-workers"
+  ],
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",

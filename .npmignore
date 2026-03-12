@@ -1,0 +1,8 @@
+.claude/
+.env
+.env.*
+wrangler.jsonc
+tests/
+*.test.ts
+worker-configuration.d.ts
+vitest.config.ts
