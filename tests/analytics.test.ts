@@ -450,6 +450,20 @@ describe("aggregateByCityFromRows", () => {
     const result = aggregateByCityFromRows(rows, 25);
     expect(result.cities[0].city).toBe("Unknown");
   });
+
+  it("keeps same-name cities in different provinces separate", () => {
+    const rows = [
+      makeRow({ scraped_city: "San Jose", scraped_province: "Batangas", scraped_region: "Region IV-A" }),
+      makeRow({ scraped_city: "San Jose", scraped_province: "Batangas", scraped_region: "Region IV-A" }),
+      makeRow({ scraped_city: "San Jose", scraped_province: "Nueva Ecija", scraped_region: "Region III" }),
+    ];
+    const result = aggregateByCityFromRows(rows, 25);
+    expect(result.cities).toHaveLength(2);
+    const batangas = result.cities.find((c) => c.province === "Batangas");
+    const nuevaEcija = result.cities.find((c) => c.province === "Nueva Ecija");
+    expect(batangas?.count).toBe(2);
+    expect(nuevaEcija?.count).toBe(1);
+  });
 });
 
 describe("aggregateExpiryRiskFromRows", () => {
@@ -521,10 +535,12 @@ describe("fetchFilteredRows", () => {
       from: vi.fn(() => builder),
     } as unknown as import("../src/db/client").SupabaseClient;
 
-    await fetchFilteredRows(client);
+    const result = await fetchFilteredRows(client);
     expect(client.from).toHaveBeenCalledWith("lts_verification_queue");
     expect(builder.select).toHaveBeenCalled();
     expect(builder.limit).toHaveBeenCalledWith(10000);
+    expect(result.rows).toEqual([]);
+    expect(result.truncated).toBe(false);
   });
 
   it("applies year filter as date range", async () => {
@@ -571,8 +587,8 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     const result = await fetchFilteredRows(client, { law: "BP220" });
-    expect(result).toHaveLength(1);
-    expect(result[0].scraped_project_type).toBe("BP 220");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].scraped_project_type).toBe("BP 220");
   });
 
   it("applies client-side status filter", async () => {
@@ -586,8 +602,23 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     const result = await fetchFilteredRows(client, { status: "active" });
-    expect(result).toHaveLength(1);
-    expect(result[0].scraped_expiry_date).toBe("2099-12-31");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].scraped_expiry_date).toBe("2099-12-31");
+  });
+
+  it("sets truncated=true when row limit is hit", async () => {
+    const rows = Array.from({ length: 10000 }, (_, i) => ({
+      lts_number: `LTS-${i}`,
+      scraped_project_type: null,
+      scraped_expiry_date: "2099-12-31",
+    }));
+    const builder = createMockBuilder({ data: rows, error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    const result = await fetchFilteredRows(client);
+    expect(result.truncated).toBe(true);
   });
 
   it("throws on query error", async () => {

@@ -32,6 +32,7 @@ export function normalizeLaw(raw: string | null): NormalizedLaw {
   return null;
 }
 
+/** Null expiry = expired. DHSUD records without an expiry date are treated as lapsed. */
 export function deriveStatus(expiryDate: string | null, today: string): "active" | "expired" {
   if (!expiryDate) return "expired";
   return expiryDate >= today ? "active" : "expired";
@@ -87,10 +88,17 @@ export interface FetchFilters {
   expiryTo?: string;
 }
 
+const ROW_LIMIT = 10_000;
+
+export interface FetchResult {
+  rows: AnalyticsRow[];
+  truncated: boolean;
+}
+
 export async function fetchFilteredRows(
   client: SupabaseClient,
   filters: FetchFilters = {}
-): Promise<AnalyticsRow[]> {
+): Promise<FetchResult> {
   let query = client.from("lts_verification_queue").select(ANALYTICS_COLUMNS);
 
   // DB-level filters
@@ -118,12 +126,13 @@ export async function fetchFilteredRows(
     query = query.lte("scraped_expiry_date", filters.expiryTo);
   }
 
-  query = query.limit(10000);
+  query = query.limit(ROW_LIMIT);
 
   const { data, error } = await query;
   if (error) throw new Error(`Analytics query failed: ${error.message}`);
 
   let rows = (data ?? []) as unknown as AnalyticsRow[];
+  const truncated = rows.length >= ROW_LIMIT;
 
   // Client-side filters
   if (filters.law) {
@@ -135,7 +144,7 @@ export async function fetchFilteredRows(
     rows = rows.filter((r) => deriveStatus(r.scraped_expiry_date, today) === filters.status);
   }
 
-  return rows;
+  return { rows, truncated };
 }
 
 // ── Aggregation Functions ───────────────────────────────────────────────────
@@ -144,11 +153,11 @@ export async function aggregateByRegion(
   client: SupabaseClient,
   filters: { year?: number; law?: NormalizedLaw; status?: "active" | "expired" } = {}
 ): Promise<ByRegionResponse> {
-  const rows = await fetchFilteredRows(client, filters);
-  return aggregateByRegionFromRows(rows);
+  const { rows, truncated } = await fetchFilteredRows(client, filters);
+  return { ...aggregateByRegionFromRows(rows), truncated };
 }
 
-export function aggregateByRegionFromRows(rows: AnalyticsRow[]): ByRegionResponse {
+export function aggregateByRegionFromRows(rows: AnalyticsRow[]): Omit<ByRegionResponse, "truncated"> {
   const today = getTodayPH();
   const map = new Map<string, { count: number; by_law: LawBreakdown; active: number; expired: number }>();
 
@@ -185,11 +194,11 @@ export async function aggregateByDeveloper(
   filters: { year?: number; region?: string; law?: NormalizedLaw } = {},
   limit = 25
 ): Promise<ByDeveloperResponse> {
-  const rows = await fetchFilteredRows(client, filters);
-  return aggregateByDeveloperFromRows(rows, limit);
+  const { rows, truncated } = await fetchFilteredRows(client, filters);
+  return { ...aggregateByDeveloperFromRows(rows, limit), truncated };
 }
 
-export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number): ByDeveloperResponse {
+export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number): Omit<ByDeveloperResponse, "truncated"> {
   const today = getTodayPH();
   const map = new Map<
     string,
@@ -231,11 +240,11 @@ export async function aggregateByLaw(
   client: SupabaseClient,
   filters: { year?: number; region?: string } = {}
 ): Promise<ByLawResponse> {
-  const rows = await fetchFilteredRows(client, filters);
-  return aggregateByLawFromRows(rows, !filters.year);
+  const { rows, truncated } = await fetchFilteredRows(client, filters);
+  return { ...aggregateByLawFromRows(rows, !filters.year), truncated };
 }
 
-export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean): ByLawResponse {
+export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean): Omit<ByLawResponse, "truncated"> {
   const map = new Map<string, { count: number; by_region: Map<string, number> }>();
 
   for (const row of rows) {
@@ -303,14 +312,14 @@ export async function aggregateTrends(
   filters: { region?: string; law?: NormalizedLaw; from_year?: number; to_year?: number } = {},
   granularity: "annual" | "quarterly" = "annual"
 ): Promise<TrendsResponse> {
-  const rows = await fetchFilteredRows(client, filters);
-  return aggregateTrendsFromRows(rows, granularity);
+  const { rows, truncated } = await fetchFilteredRows(client, filters);
+  return { ...aggregateTrendsFromRows(rows, granularity), truncated };
 }
 
 export function aggregateTrendsFromRows(
   rows: AnalyticsRow[],
   granularity: "annual" | "quarterly"
-): TrendsResponse {
+): Omit<TrendsResponse, "truncated"> {
   const map = new Map<string, { count: number; by_law: LawBreakdown }>();
 
   for (const row of rows) {
@@ -351,15 +360,16 @@ export async function aggregateByCity(
   filters: { region?: string; year?: number; law?: NormalizedLaw } = {},
   limit = 25
 ): Promise<ByCityResponse> {
-  const rows = await fetchFilteredRows(client, filters);
-  return aggregateByCityFromRows(rows, limit);
+  const { rows, truncated } = await fetchFilteredRows(client, filters);
+  return { ...aggregateByCityFromRows(rows, limit), truncated };
 }
 
-export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): ByCityResponse {
+export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): Omit<ByCityResponse, "truncated"> {
   const today = getTodayPH();
   const map = new Map<
     string,
     {
+      city: string;
       province: string | null;
       region: string | null;
       count: number;
@@ -372,9 +382,12 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): By
 
   for (const row of rows) {
     const city = row.scraped_city ?? "Unknown";
-    let bucket = map.get(city);
+    const province = row.scraped_province ?? "Unknown";
+    const key = `${city}|||${province}`;
+    let bucket = map.get(key);
     if (!bucket) {
       bucket = {
+        city,
         province: row.scraped_province,
         region: row.scraped_region,
         count: 0,
@@ -383,7 +396,7 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): By
         expired: 0,
         devCounts: new Map(),
       };
-      map.set(city, bucket);
+      map.set(key, bucket);
     }
     bucket.count++;
     incrementLaw(bucket.by_law, normalizeLaw(row.scraped_project_type));
@@ -394,8 +407,8 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): By
   }
 
   const total = rows.length;
-  const cities = [...map.entries()]
-    .map(([city, b]) => {
+  const cities = [...map.values()]
+    .map((b) => {
       let topDev: string | null = null;
       let topCount = 0;
       for (const [dev, count] of b.devCounts) {
@@ -405,7 +418,7 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): By
         }
       }
       return {
-        city,
+        city: b.city,
         province: b.province,
         region: b.region,
         count: b.count,
@@ -430,20 +443,20 @@ export async function aggregateExpiryRisk(
   const today = getTodayPH();
   const futureDate = getFutureDatePH(days);
 
-  const rows = await fetchFilteredRows(client, {
+  const { rows, truncated } = await fetchFilteredRows(client, {
     ...filters,
     expiryFrom: today,
     expiryTo: futureDate,
   });
 
-  return aggregateExpiryRiskFromRows(rows, today, days);
+  return { ...aggregateExpiryRiskFromRows(rows, today, days), truncated };
 }
 
 export function aggregateExpiryRiskFromRows(
   rows: AnalyticsRow[],
   today: string,
   days: number
-): ExpiryRiskResponse {
+): Omit<ExpiryRiskResponse, "truncated"> {
   const todayMs = new Date(today).getTime();
 
   const records: ExpiryRiskRecord[] = rows

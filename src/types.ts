@@ -169,6 +169,7 @@ export interface ByRegionItem {
 
 export interface ByRegionResponse {
   total: number;
+  truncated: boolean;
   regions: ByRegionItem[];
 }
 
@@ -184,6 +185,7 @@ export interface ByDeveloperItem {
 
 export interface ByDeveloperResponse {
   total: number;
+  truncated: boolean;
   developers: ByDeveloperItem[];
 }
 
@@ -201,6 +203,7 @@ export interface ByLawItem {
 
 export interface ByLawResponse {
   total: number;
+  truncated: boolean;
   breakdown: ByLawItem[];
   yoy_shift: { from_year: number; to_year: number; bp220_share_delta: number } | null;
 }
@@ -213,6 +216,7 @@ export interface TrendPeriod {
 
 export interface TrendsResponse {
   total: number;
+  truncated: boolean;
   granularity: "annual" | "quarterly";
   periods: TrendPeriod[];
   peak_period: string | null;
@@ -233,6 +237,7 @@ export interface ByCityItem {
 
 export interface ByCityResponse {
   total: number;
+  truncated: boolean;
   cities: ByCityItem[];
 }
 
@@ -253,6 +258,7 @@ export interface ExpiryRiskSummary {
 
 export interface ExpiryRiskResponse {
   total: number;
+  truncated: boolean;
   days_window: number;
   summary: ExpiryRiskSummary;
   records: ExpiryRiskRecord[];

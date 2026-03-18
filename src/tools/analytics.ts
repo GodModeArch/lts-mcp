@@ -27,7 +27,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_by_region --
   server.tool(
     "lts_by_region",
-    "Aggregate LTS records by DHSUD region. Returns count, market share, law breakdown (BP220/PD957), and active/expired split per region. Use for State of RE reports and regional housing market analysis. Cross-reference with PSGC MCP search for population data to compute per-capita density.",
+    "Aggregate LTS records by DHSUD region. Returns count, market share, law breakdown (BP220/PD957), and active/expired split per region. Use for State of RE reports and regional housing market analysis. Cross-reference with PSGC MCP search for population data to compute per-capita density. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       year: z.number().int().min(2000).max(2030).optional().describe("Filter by LTS issue year"),
       law: lawEnum,
@@ -50,7 +50,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_by_developer --
   server.tool(
     "lts_by_developer",
-    "Rank developers by LTS count with regional footprint, law breakdown, and active/expired split. Use for developer intelligence, competitive analysis, and identifying which developers dominate specific regions or housing segments.",
+    "Rank developers by LTS count with regional footprint, law breakdown, and active/expired split. Use for developer intelligence, competitive analysis, and identifying which developers dominate specific regions or housing segments. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       year: z.number().int().min(2000).max(2030).optional().describe("Filter by LTS issue year"),
       region: z.string().optional().describe("Filter to a specific DHSUD region"),
@@ -80,7 +80,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_by_law --
   server.tool(
     "lts_by_law",
-    "Break down LTS records by housing law (BP220 socialized/economic vs PD957 open market). Shows regional distribution per law and year-over-year shift in BP220 share (when no year filter). Use for housing policy analysis and socialized housing supply tracking.",
+    "Break down LTS records by housing law (BP220 socialized/economic vs PD957 open market). Shows regional distribution per law and year-over-year shift in BP220 share (when no year filter). Use for housing policy analysis and socialized housing supply tracking. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       year: z.number().int().min(2000).max(2030).optional().describe("Filter by LTS issue year. Omit for YOY shift calculation"),
       region: z.string().optional().describe("Filter to a specific DHSUD region"),
@@ -98,7 +98,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_trends --
   server.tool(
     "lts_trends",
-    "Show LTS issuance trends over time with annual or quarterly granularity. Returns period counts with law breakdown, peak period, and year-over-year growth percentage. Use for housing supply pipeline analysis and market timing.",
+    "Show LTS issuance trends over time with annual or quarterly granularity. Returns period counts with law breakdown, peak period, and year-over-year growth percentage. Use for housing supply pipeline analysis and market timing. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       region: z.string().optional().describe("Filter to a specific DHSUD region"),
       law: lawEnum,
@@ -126,7 +126,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_by_city --
   server.tool(
     "lts_by_city",
-    "Rank cities by LTS count with province, region, law breakdown, active/expired split, and top developer per city. Use for housing pressure indices, city-level market analysis, and identifying emerging development hotspots. Cross-reference with PSGC MCP for city classification and population.",
+    "Rank cities by LTS count with province, region, law breakdown, active/expired split, and top developer per city. Groups by city+province to avoid merging same-name cities across provinces. Use for housing pressure indices, city-level market analysis, and identifying emerging development hotspots. Cross-reference with PSGC MCP for city classification and population. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       region: z.string().optional().describe("Filter to a specific DHSUD region"),
       year: z.number().int().min(2000).max(2030).optional().describe("Filter by LTS issue year"),
@@ -156,7 +156,7 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
   // -- lts_expiry_risk --
   server.tool(
     "lts_expiry_risk",
-    "Find LTS records expiring within a given number of days. Returns records sorted by urgency (soonest first) with days remaining, plus summary counts by region and developer. Use for compliance monitoring, renewal pipeline tracking, and risk assessment.",
+    "Find LTS records expiring within a given number of days. Returns records sorted by urgency (soonest first) with days remaining, plus summary counts by region and developer. Use for compliance monitoring, renewal pipeline tracking, and risk assessment. Capped at 10k rows; check truncated flag and narrow filters if true.",
     {
       region: z.string().optional().describe("Filter to a specific DHSUD region"),
       law: lawEnum,
