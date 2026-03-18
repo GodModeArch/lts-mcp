@@ -134,3 +134,126 @@ export interface StatsResponse {
     expiringSoon: number;
   };
 }
+
+// ── Analytics Types ─────────────────────────────────────────────────────────
+
+/** Lightweight row for aggregation queries (subset of QueueItemRow). */
+export interface AnalyticsRow {
+  lts_number: string;
+  scraped_project_name: string;
+  scraped_developer: string | null;
+  scraped_city: string | null;
+  scraped_province: string | null;
+  scraped_region: string | null;
+  scraped_issue_date: string | null;
+  scraped_expiry_date: string | null;
+  scraped_project_type: string | null;
+}
+
+export type NormalizedLaw = "BP220" | "PD957" | null;
+
+export interface LawBreakdown {
+  BP220: number;
+  PD957: number;
+  unknown: number;
+}
+
+export interface ByRegionItem {
+  region: string;
+  count: number;
+  share_pct: number;
+  by_law: LawBreakdown;
+  active: number;
+  expired: number;
+}
+
+export interface ByRegionResponse {
+  total: number;
+  regions: ByRegionItem[];
+}
+
+export interface ByDeveloperItem {
+  developer: string;
+  count: number;
+  share_pct: number;
+  regions: string[];
+  by_law: LawBreakdown;
+  active: number;
+  expired: number;
+}
+
+export interface ByDeveloperResponse {
+  total: number;
+  developers: ByDeveloperItem[];
+}
+
+export interface LawRegionItem {
+  region: string;
+  count: number;
+}
+
+export interface ByLawItem {
+  law: string;
+  count: number;
+  share_pct: number;
+  by_region: LawRegionItem[];
+}
+
+export interface ByLawResponse {
+  total: number;
+  breakdown: ByLawItem[];
+  yoy_shift: { from_year: number; to_year: number; bp220_share_delta: number } | null;
+}
+
+export interface TrendPeriod {
+  period: string;
+  count: number;
+  by_law: LawBreakdown;
+}
+
+export interface TrendsResponse {
+  total: number;
+  granularity: "annual" | "quarterly";
+  periods: TrendPeriod[];
+  peak_period: string | null;
+  yoy_growth_pct: number | null;
+}
+
+export interface ByCityItem {
+  city: string;
+  province: string | null;
+  region: string | null;
+  count: number;
+  share_pct: number;
+  by_law: LawBreakdown;
+  active: number;
+  expired: number;
+  top_developer: string | null;
+}
+
+export interface ByCityResponse {
+  total: number;
+  cities: ByCityItem[];
+}
+
+export interface ExpiryRiskRecord {
+  lts_number: string;
+  project_name: string;
+  developer: string | null;
+  city: string | null;
+  region: string | null;
+  expiry_date: string;
+  days_remaining: number;
+}
+
+export interface ExpiryRiskSummary {
+  by_region: { region: string; count: number }[];
+  by_developer: { developer: string; count: number }[];
+}
+
+export interface ExpiryRiskResponse {
+  total: number;
+  days_window: number;
+  summary: ExpiryRiskSummary;
+  records: ExpiryRiskRecord[];
+}
