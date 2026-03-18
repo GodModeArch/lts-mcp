@@ -174,7 +174,7 @@ describe("aggregateByRegionFromRows", () => {
       makeRow({ scraped_region: "NCR" }),
       makeRow({ scraped_region: "Region IV-A" }),
     ];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.total).toBe(3);
     expect(result.regions).toHaveLength(2);
     expect(result.regions[0].region).toBe("NCR");
@@ -190,7 +190,7 @@ describe("aggregateByRegionFromRows", () => {
       makeRow({ scraped_region: "NCR" }),
       makeRow({ scraped_region: "Region III" }),
     ];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].share_pct).toBe(75);
     expect(result.regions[1].share_pct).toBe(25);
   });
@@ -201,7 +201,7 @@ describe("aggregateByRegionFromRows", () => {
       makeRow({ scraped_region: "NCR", scraped_project_type: "PD 957" }),
       makeRow({ scraped_region: "NCR", scraped_project_type: null }),
     ];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].by_law).toEqual({ BP220: 1, PD957: 1, unknown: 1 });
   });
 
@@ -210,19 +210,19 @@ describe("aggregateByRegionFromRows", () => {
       makeRow({ scraped_region: "NCR", scraped_expiry_date: "2099-12-31" }),
       makeRow({ scraped_region: "NCR", scraped_expiry_date: "2020-01-01" }),
     ];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].active).toBe(1);
     expect(result.regions[0].expired).toBe(1);
   });
 
   it("maps null region to Unknown", () => {
     const rows = [makeRow({ scraped_region: null })];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].region).toBe("Unknown");
   });
 
   it("returns empty regions for empty rows", () => {
-    const result = aggregateByRegionFromRows([]);
+    const result = aggregateByRegionFromRows([], "2025-06-01");
     expect(result.total).toBe(0);
     expect(result.regions).toEqual([]);
   });
@@ -236,7 +236,7 @@ describe("aggregateByRegionFromRows", () => {
       makeRow({ scraped_region: "C" }),
       makeRow({ scraped_region: "C" }),
     ];
-    const result = aggregateByRegionFromRows(rows);
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions.map((r) => r.region)).toEqual(["B", "C", "A"]);
   });
 });
@@ -248,7 +248,7 @@ describe("aggregateByDeveloperFromRows", () => {
       makeRow({ scraped_developer: "DevA", scraped_region: "Region III" }),
       makeRow({ scraped_developer: "DevB", scraped_region: "NCR" }),
     ];
-    const result = aggregateByDeveloperFromRows(rows, 25);
+    const result = aggregateByDeveloperFromRows(rows, 25, "2025-06-01");
     expect(result.total).toBe(3);
     expect(result.developers[0].developer).toBe("DevA");
     expect(result.developers[0].regions).toEqual(["NCR", "Region III"]);
@@ -261,14 +261,14 @@ describe("aggregateByDeveloperFromRows", () => {
       makeRow({ scraped_developer: "B" }),
       makeRow({ scraped_developer: "C" }),
     ];
-    const result = aggregateByDeveloperFromRows(rows, 2);
+    const result = aggregateByDeveloperFromRows(rows, 2, "2025-06-01");
     expect(result.developers).toHaveLength(2);
     expect(result.total).toBe(4);
   });
 
   it("maps null developer to Unknown", () => {
     const rows = [makeRow({ scraped_developer: null })];
-    const result = aggregateByDeveloperFromRows(rows, 25);
+    const result = aggregateByDeveloperFromRows(rows, 25, "2025-06-01");
     expect(result.developers[0].developer).toBe("Unknown");
   });
 });
@@ -417,7 +417,7 @@ describe("aggregateByCityFromRows", () => {
       makeRow({ scraped_city: "Makati", scraped_province: "Metro Manila", scraped_region: "NCR" }),
       makeRow({ scraped_city: "Taguig", scraped_province: "Metro Manila", scraped_region: "NCR" }),
     ];
-    const result = aggregateByCityFromRows(rows, 25);
+    const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.total).toBe(3);
     expect(result.cities[0].city).toBe("Makati");
     expect(result.cities[0].count).toBe(2);
@@ -430,7 +430,7 @@ describe("aggregateByCityFromRows", () => {
       makeRow({ scraped_city: "Makati", scraped_developer: "Ayala" }),
       makeRow({ scraped_city: "Makati", scraped_developer: "SMDC" }),
     ];
-    const result = aggregateByCityFromRows(rows, 25);
+    const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities[0].top_developer).toBe("Ayala");
   });
 
@@ -441,13 +441,13 @@ describe("aggregateByCityFromRows", () => {
       makeRow({ scraped_city: "B" }),
       makeRow({ scraped_city: "C" }),
     ];
-    const result = aggregateByCityFromRows(rows, 2);
+    const result = aggregateByCityFromRows(rows, 2, "2025-06-01");
     expect(result.cities).toHaveLength(2);
   });
 
   it("maps null city to Unknown", () => {
     const rows = [makeRow({ scraped_city: null })];
-    const result = aggregateByCityFromRows(rows, 25);
+    const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities[0].city).toBe("Unknown");
   });
 
@@ -457,7 +457,7 @@ describe("aggregateByCityFromRows", () => {
       makeRow({ scraped_city: "San Jose", scraped_province: "Batangas", scraped_region: "Region IV-A" }),
       makeRow({ scraped_city: "San Jose", scraped_province: "Nueva Ecija", scraped_region: "Region III" }),
     ];
-    const result = aggregateByCityFromRows(rows, 25);
+    const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities).toHaveLength(2);
     const batangas = result.cities.find((c) => c.province === "Batangas");
     const nuevaEcija = result.cities.find((c) => c.province === "Nueva Ecija");

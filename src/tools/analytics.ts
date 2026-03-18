@@ -11,7 +11,7 @@ import {
   aggregateByCity,
   aggregateExpiryRisk,
 } from "../db/analytics";
-import { toolResult, safeToolError } from "../utils";
+import { toolResult, toolError, safeToolError } from "../utils";
 
 const lawEnum = z
   .enum(["BP220", "PD957"])
@@ -110,6 +110,9 @@ export function registerAnalyticsTools(server: McpServer, client: SupabaseClient
         .describe("Time bucket granularity"),
     },
     async ({ region, law, from_year, to_year, granularity }) => {
+      if (from_year && to_year && from_year > to_year) {
+        return toolError("from_year must be <= to_year.");
+      }
       try {
         const result = await aggregateTrends(
           client,

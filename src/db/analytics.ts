@@ -154,11 +154,10 @@ export async function aggregateByRegion(
   filters: { year?: number; law?: NormalizedLaw; status?: "active" | "expired" } = {}
 ): Promise<ByRegionResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
-  return { ...aggregateByRegionFromRows(rows), truncated };
+  return { ...aggregateByRegionFromRows(rows, getTodayPH()), truncated };
 }
 
-export function aggregateByRegionFromRows(rows: AnalyticsRow[]): Omit<ByRegionResponse, "truncated"> {
-  const today = getTodayPH();
+export function aggregateByRegionFromRows(rows: AnalyticsRow[], today: string): Omit<ByRegionResponse, "truncated"> {
   const map = new Map<string, { count: number; by_law: LawBreakdown; active: number; expired: number }>();
 
   for (const row of rows) {
@@ -195,11 +194,10 @@ export async function aggregateByDeveloper(
   limit = 25
 ): Promise<ByDeveloperResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
-  return { ...aggregateByDeveloperFromRows(rows, limit), truncated };
+  return { ...aggregateByDeveloperFromRows(rows, limit, getTodayPH()), truncated };
 }
 
-export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number): Omit<ByDeveloperResponse, "truncated"> {
-  const today = getTodayPH();
+export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number, today: string): Omit<ByDeveloperResponse, "truncated"> {
   const map = new Map<
     string,
     { count: number; regions: Set<string>; by_law: LawBreakdown; active: number; expired: number }
@@ -361,11 +359,10 @@ export async function aggregateByCity(
   limit = 25
 ): Promise<ByCityResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
-  return { ...aggregateByCityFromRows(rows, limit), truncated };
+  return { ...aggregateByCityFromRows(rows, limit, getTodayPH()), truncated };
 }
 
-export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number): Omit<ByCityResponse, "truncated"> {
-  const today = getTodayPH();
+export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, today: string): Omit<ByCityResponse, "truncated"> {
   const map = new Map<
     string,
     {
