@@ -1,52 +1,32 @@
 // ── LTS Status Enum ──────────────────────────────────────────────────────────
 export type LTSStatus = "unverified" | "verified" | "expired" | "none";
 export type LTSSource = "dhsud_import" | "manual" | "admin";
-export type MatchStatus =
-  | "pending"
-  | "auto_matched"
-  | "manual_matched"
-  | "no_match"
-  | "skipped"
-  | "new_project";
-export type MatchType = "exact_lts" | "exact_name" | "fuzzy" | "manual" | "new";
+export type ConfidenceLevel = "high" | "medium" | "low";
+export type LTSFormat = "standard" | "regional" | "amendment" | "numeric_only" | "unknown";
 
-// ── Queue Item (lts_verification_queue) ─────────────────────────────────────
-export interface QueueItemRow {
-  id: string;
+// ── LTS Record (lts_records table) ──────────────────────────────────────────
+export interface LTSRecordRow {
   lts_number: string;
-  scraped_project_name: string;
-  scraped_developer: string | null;
-  scraped_city: string | null;
-  scraped_city_slug: string | null;
-  scraped_province: string | null;
-  scraped_region: string | null;
-  scraped_issue_date: string | null;
-  scraped_expiry_date: string | null;
-  scraped_project_type: string | null;
+  raw_project_name: string;
+  raw_developer: string | null;
+  normalized_project_name: string;
+  base_project_name: string;
   phase_name: string | null;
-  source_url: string;
-  match_status: MatchStatus;
-  matched_project_id: string | null;
-  match_score: number | null;
-  match_type: MatchType | null;
-  candidates: MatchCandidate[];
-  linked_project_lts_id: string | null;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  review_notes: string | null;
-  scraped_at: string;
+  normalized_developer: string | null;
+  normalized_city: string;
+  city_slug: string;
+  normalized_province: string | null;
+  normalized_region: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  lts_format: LTSFormat;
+  confidence: ConfidenceLevel;
+  inferred_project_type: string | null;
+  parsing_notes: string[] | null;
+  project_id: string | null;
+  source_url: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface MatchCandidate {
-  projectId: string;
-  projectName: string;
-  developerName: string;
-  developerSlug: string;
-  city: string;
-  score: number;
-  matchReason: string;
 }
 
 // ── Project LTS (project_lts) ───────────────────────────────────────────────
@@ -69,7 +49,6 @@ export interface ProjectLTSRow {
   document_url: string | null;
   source: LTSSource;
   source_url: string | null;
-  queue_item_id: string | null;
   is_primary: boolean;
   display_order: number;
   notes: string | null;
@@ -101,17 +80,18 @@ export interface ProjectRow {
   developers?: { name: string; slug: string }[] | { name: string; slug: string } | null;
 }
 
-// ── Verification Stats (get_lts_verification_stats RPC) ─────────────────────
-export interface VerificationStats {
+// ── LTS Stats (get_lts_stats RPC) ───────────────────────────────────────────
+export interface LTSStatsResult {
   total_records: number;
-  pending_count: number;
-  auto_matched_count: number;
-  manual_matched_count: number;
-  no_match_count: number;
-  expired_lts_count: number;
-  expiring_soon_count: number;
-  total_project_lts: number;
-  verified_project_lts: number;
+  high_confidence: number;
+  medium_confidence: number;
+  low_confidence: number;
+  linked_to_project: number;
+  unlinked: number;
+  active_lts: number;
+  expired_lts: number;
+  unique_developers: number;
+  unique_cities: number;
 }
 
 // ── Paginated Response ──────────────────────────────────────────────────────
@@ -125,7 +105,7 @@ export interface PaginatedResponse<T> {
 
 // ── Tool Response Wrappers ──────────────────────────────────────────────────
 export interface StatsResponse {
-  queue: VerificationStats;
+  ltsRecords: LTSStatsResult;
   projects: {
     total: number;
     withLTS: number;
@@ -137,17 +117,17 @@ export interface StatsResponse {
 
 // ── Analytics Types ─────────────────────────────────────────────────────────
 
-/** Lightweight row for aggregation queries (subset of QueueItemRow). */
+/** Lightweight row for aggregation queries (subset of LTSRecordRow). */
 export interface AnalyticsRow {
   lts_number: string;
-  scraped_project_name: string;
-  scraped_developer: string | null;
-  scraped_city: string | null;
-  scraped_province: string | null;
-  scraped_region: string | null;
-  scraped_issue_date: string | null;
-  scraped_expiry_date: string | null;
-  scraped_project_type: string | null;
+  normalized_project_name: string;
+  normalized_developer: string | null;
+  normalized_city: string | null;
+  normalized_province: string | null;
+  normalized_region: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  inferred_project_type: string | null;
 }
 
 export type NormalizedLaw = "BP220" | "PD957" | null;

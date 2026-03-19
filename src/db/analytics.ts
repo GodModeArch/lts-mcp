@@ -65,14 +65,14 @@ export function getPeriodKey(isoDate: string, granularity: "annual" | "quarterly
 
 const ANALYTICS_COLUMNS = [
   "lts_number",
-  "scraped_project_name",
-  "scraped_developer",
-  "scraped_city",
-  "scraped_province",
-  "scraped_region",
-  "scraped_issue_date",
-  "scraped_expiry_date",
-  "scraped_project_type",
+  "normalized_project_name",
+  "normalized_developer",
+  "normalized_city",
+  "normalized_province",
+  "normalized_region",
+  "issue_date",
+  "expiry_date",
+  "inferred_project_type",
 ].join(",");
 
 // ── Shared Data Fetcher ─────────────────────────────────────────────────────
@@ -99,31 +99,31 @@ export async function fetchFilteredRows(
   client: SupabaseClient,
   filters: FetchFilters = {}
 ): Promise<FetchResult> {
-  let query = client.from("lts_verification_queue").select(ANALYTICS_COLUMNS);
+  let query = client.from("lts_records").select(ANALYTICS_COLUMNS);
 
   // DB-level filters
   if (filters.year) {
     query = query
-      .gte("scraped_issue_date", `${filters.year}-01-01`)
-      .lte("scraped_issue_date", `${filters.year}-12-31`);
+      .gte("issue_date", `${filters.year}-01-01`)
+      .lte("issue_date", `${filters.year}-12-31`);
   } else {
     if (filters.from_year) {
-      query = query.gte("scraped_issue_date", `${filters.from_year}-01-01`);
+      query = query.gte("issue_date", `${filters.from_year}-01-01`);
     }
     if (filters.to_year) {
-      query = query.lte("scraped_issue_date", `${filters.to_year}-12-31`);
+      query = query.lte("issue_date", `${filters.to_year}-12-31`);
     }
   }
 
   if (filters.region) {
-    query = query.eq("scraped_region", sanitizeFilterValue(filters.region));
+    query = query.eq("normalized_region", sanitizeFilterValue(filters.region));
   }
 
   if (filters.expiryFrom) {
-    query = query.gte("scraped_expiry_date", filters.expiryFrom);
+    query = query.gte("expiry_date", filters.expiryFrom);
   }
   if (filters.expiryTo) {
-    query = query.lte("scraped_expiry_date", filters.expiryTo);
+    query = query.lte("expiry_date", filters.expiryTo);
   }
 
   query = query.limit(ROW_LIMIT);
@@ -136,12 +136,12 @@ export async function fetchFilteredRows(
 
   // Client-side filters
   if (filters.law) {
-    rows = rows.filter((r) => normalizeLaw(r.scraped_project_type) === filters.law);
+    rows = rows.filter((r) => normalizeLaw(r.inferred_project_type) === filters.law);
   }
 
   if (filters.status) {
     const today = getTodayPH();
-    rows = rows.filter((r) => deriveStatus(r.scraped_expiry_date, today) === filters.status);
+    rows = rows.filter((r) => deriveStatus(r.expiry_date, today) === filters.status);
   }
 
   return { rows, truncated };
@@ -161,15 +161,15 @@ export function aggregateByRegionFromRows(rows: AnalyticsRow[], today: string): 
   const map = new Map<string, { count: number; by_law: LawBreakdown; active: number; expired: number }>();
 
   for (const row of rows) {
-    const region = row.scraped_region ?? "Unknown";
+    const region = row.normalized_region ?? "Unknown";
     let bucket = map.get(region);
     if (!bucket) {
       bucket = { count: 0, by_law: emptyLawBreakdown(), active: 0, expired: 0 };
       map.set(region, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.scraped_project_type));
-    if (deriveStatus(row.scraped_expiry_date, today) === "active") bucket.active++;
+    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
   }
 
@@ -204,16 +204,16 @@ export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number
   >();
 
   for (const row of rows) {
-    const dev = row.scraped_developer ?? "Unknown";
+    const dev = row.normalized_developer ?? "Unknown";
     let bucket = map.get(dev);
     if (!bucket) {
       bucket = { count: 0, regions: new Set(), by_law: emptyLawBreakdown(), active: 0, expired: 0 };
       map.set(dev, bucket);
     }
     bucket.count++;
-    if (row.scraped_region) bucket.regions.add(row.scraped_region);
-    incrementLaw(bucket.by_law, normalizeLaw(row.scraped_project_type));
-    if (deriveStatus(row.scraped_expiry_date, today) === "active") bucket.active++;
+    if (row.normalized_region) bucket.regions.add(row.normalized_region);
+    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
   }
 
@@ -246,14 +246,14 @@ export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean
   const map = new Map<string, { count: number; by_region: Map<string, number> }>();
 
   for (const row of rows) {
-    const law = normalizeLaw(row.scraped_project_type) ?? "unknown";
+    const law = normalizeLaw(row.inferred_project_type) ?? "unknown";
     let bucket = map.get(law);
     if (!bucket) {
       bucket = { count: 0, by_region: new Map() };
       map.set(law, bucket);
     }
     bucket.count++;
-    const region = row.scraped_region ?? "Unknown";
+    const region = row.normalized_region ?? "Unknown";
     bucket.by_region.set(region, (bucket.by_region.get(region) ?? 0) + 1);
   }
 
@@ -274,8 +274,8 @@ export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean
   if (computeYoy) {
     const yearBp220 = new Map<number, { bp220: number; total: number }>();
     for (const row of rows) {
-      if (!row.scraped_issue_date) continue;
-      const year = parseInt(row.scraped_issue_date.slice(0, 4), 10);
+      if (!row.issue_date) continue;
+      const year = parseInt(row.issue_date.slice(0, 4), 10);
       if (isNaN(year)) continue;
       let entry = yearBp220.get(year);
       if (!entry) {
@@ -283,7 +283,7 @@ export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean
         yearBp220.set(year, entry);
       }
       entry.total++;
-      if (normalizeLaw(row.scraped_project_type) === "BP220") entry.bp220++;
+      if (normalizeLaw(row.inferred_project_type) === "BP220") entry.bp220++;
     }
 
     const years = [...yearBp220.keys()].sort((a, b) => a - b);
@@ -321,15 +321,15 @@ export function aggregateTrendsFromRows(
   const map = new Map<string, { count: number; by_law: LawBreakdown }>();
 
   for (const row of rows) {
-    if (!row.scraped_issue_date) continue;
-    const key = getPeriodKey(row.scraped_issue_date, granularity);
+    if (!row.issue_date) continue;
+    const key = getPeriodKey(row.issue_date, granularity);
     let bucket = map.get(key);
     if (!bucket) {
       bucket = { count: 0, by_law: emptyLawBreakdown() };
       map.set(key, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.scraped_project_type));
+    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
   }
 
   const periods: TrendPeriod[] = [...map.entries()]
@@ -378,15 +378,15 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
   >();
 
   for (const row of rows) {
-    const city = row.scraped_city ?? "Unknown";
-    const province = row.scraped_province ?? "Unknown";
+    const city = row.normalized_city ?? "Unknown";
+    const province = row.normalized_province ?? "Unknown";
     const key = `${city}|||${province}`;
     let bucket = map.get(key);
     if (!bucket) {
       bucket = {
         city,
-        province: row.scraped_province,
-        region: row.scraped_region,
+        province: row.normalized_province,
+        region: row.normalized_region,
         count: 0,
         by_law: emptyLawBreakdown(),
         active: 0,
@@ -396,10 +396,10 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
       map.set(key, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.scraped_project_type));
-    if (deriveStatus(row.scraped_expiry_date, today) === "active") bucket.active++;
+    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
-    const dev = row.scraped_developer ?? "Unknown";
+    const dev = row.normalized_developer ?? "Unknown";
     bucket.devCounts.set(dev, (bucket.devCounts.get(dev) ?? 0) + 1);
   }
 
@@ -457,17 +457,17 @@ export function aggregateExpiryRiskFromRows(
   const todayMs = new Date(today).getTime();
 
   const records: ExpiryRiskRecord[] = rows
-    .filter((r) => r.scraped_expiry_date !== null)
+    .filter((r) => r.expiry_date !== null)
     .map((r) => {
-      const expiryMs = new Date(r.scraped_expiry_date!).getTime();
+      const expiryMs = new Date(r.expiry_date!).getTime();
       const daysRemaining = Math.ceil((expiryMs - todayMs) / (1000 * 60 * 60 * 24));
       return {
         lts_number: r.lts_number,
-        project_name: r.scraped_project_name,
-        developer: r.scraped_developer,
-        city: r.scraped_city,
-        region: r.scraped_region,
-        expiry_date: r.scraped_expiry_date!,
+        project_name: r.normalized_project_name,
+        developer: r.normalized_developer,
+        city: r.normalized_city,
+        region: r.normalized_region,
+        expiry_date: r.expiry_date!,
         days_remaining: daysRemaining,
       };
     })
