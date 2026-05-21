@@ -531,7 +531,7 @@ describe("aggregateExpiryRiskFromRows", () => {
 
 function createMockBuilder(response: { data: unknown; error: null | { message: string } }) {
   const builder: Record<string, unknown> = {};
-  const chainMethods = ["select", "eq", "gte", "lte", "order", "limit"];
+  const chainMethods = ["select", "eq", "gte", "lte", "order", "range"];
   for (const method of chainMethods) {
     builder[method] = vi.fn().mockReturnValue(builder);
   }
@@ -540,7 +540,7 @@ function createMockBuilder(response: { data: unknown; error: null | { message: s
 }
 
 describe("fetchFilteredRows", () => {
-  it("selects only analytics columns and applies limit", async () => {
+  it("selects analytics columns and pages with range", async () => {
     const builder = createMockBuilder({ data: [], error: null });
     const client = {
       from: vi.fn(() => builder),
@@ -549,12 +549,53 @@ describe("fetchFilteredRows", () => {
     const result = await fetchFilteredRows(client);
     expect(client.from).toHaveBeenCalledWith("lts_records");
     expect(builder.select).toHaveBeenCalled();
-    expect(builder.limit).toHaveBeenCalledWith(10000);
+    expect(builder.range).toHaveBeenCalledWith(0, 999);
     expect(result.rows).toEqual([]);
     expect(result.truncated).toBe(false);
   });
 
-  it("orders by issue_date then lts_number before the cap (deterministic truncation)", async () => {
+  it("stops after a short page (no extra range request)", async () => {
+    const builder = createMockBuilder({ data: [{ lts_number: "LTS-1" }], error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    const result = await fetchFilteredRows(client);
+    // One page of 1 row (< PAGE_SIZE) means the whole set fit: one range call.
+    expect((builder.range as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("pages through multiple range requests until a short page", async () => {
+    const firstPage = Array.from({ length: 1000 }, (_, i) => ({ lts_number: `LTS-${i}` }));
+    const secondPage = [{ lts_number: "LTS-1000" }];
+    let call = 0;
+
+    const builder: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "gte", "lte", "order", "range"]) {
+      builder[method] = vi.fn().mockReturnValue(builder);
+    }
+    builder.then = (resolve: (val: { data: unknown; error: null }) => void) => {
+      const data = call === 0 ? firstPage : secondPage;
+      call++;
+      resolve({ data, error: null });
+    };
+
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    const result = await fetchFilteredRows(client);
+    expect((builder.range as ReturnType<typeof vi.fn>).mock.calls).toEqual([
+      [0, 999],
+      [1000, 1999],
+    ]);
+    expect(result.rows).toHaveLength(1001);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("orders by issue_date then lts_number for stable pagination", async () => {
     const builder = createMockBuilder({ data: [], error: null });
     const client = {
       from: vi.fn(() => builder),

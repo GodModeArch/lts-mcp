@@ -89,15 +89,21 @@ export interface FetchFilters {
   expiryFrom?: string;
   expiryTo?: string;
   /**
-   * Deterministic ordering applied before the ROW_LIMIT cap. Without it,
-   * a table over ROW_LIMIT returns an arbitrary slice and biases every
-   * aggregate. Expiry-risk paths order by expiry_date asc so the
-   * soonest-expiring records are never the ones dropped by truncation.
+   * Ordering applied across the paged fetch. Stable order (the chosen column
+   * plus the lts_number PK) makes range pagination deterministic. Expiry-risk
+   * paths order by expiry_date asc so the soonest-expiring records survive if
+   * the dataset ever exceeds MAX_ROWS.
    */
   orderBy?: { column: "issue_date" | "expiry_date"; ascending?: boolean };
 }
 
-const ROW_LIMIT = 10_000;
+// Page size for range fetches. Matches Supabase's default db-max-rows so a
+// single page is never capped below what we ask for.
+const PAGE_SIZE = 1_000;
+// Hard ceiling on rows pulled into the Worker for client-side aggregation.
+// Crossing it sets truncated=true; the real fix at that scale is DB-side
+// aggregation rather than fetching everything.
+const MAX_ROWS = 100_000;
 
 export interface FetchResult {
   rows: AnalyticsRow[];
@@ -108,48 +114,65 @@ export async function fetchFilteredRows(
   client: SupabaseClient,
   filters: FetchFilters = {}
 ): Promise<FetchResult> {
-  let query = client.from("lts_records").select(ANALYTICS_COLUMNS);
-
-  // DB-level filters
-  if (filters.year) {
-    query = query
-      .gte("issue_date", `${filters.year}-01-01`)
-      .lte("issue_date", `${filters.year}-12-31`);
-  } else {
-    if (filters.from_year) {
-      query = query.gte("issue_date", `${filters.from_year}-01-01`);
-    }
-    if (filters.to_year) {
-      query = query.lte("issue_date", `${filters.to_year}-12-31`);
-    }
-  }
-
-  if (filters.region) {
-    // .eq() values are sent literally by PostgREST; do not escape with
-    // sanitizeFilterValue (that is only for .or() filter strings).
-    query = query.eq("normalized_region", filters.region);
-  }
-
-  if (filters.expiryFrom) {
-    query = query.gte("expiry_date", filters.expiryFrom);
-  }
-  if (filters.expiryTo) {
-    query = query.lte("expiry_date", filters.expiryTo);
-  }
-
-  // Deterministic order before the cap, with lts_number (PK) as tiebreaker
-  // so a truncated fetch is reproducible rather than an arbitrary slice.
   const order = filters.orderBy ?? { column: "issue_date" as const, ascending: true };
-  query = query
-    .order(order.column, { ascending: order.ascending ?? true, nullsFirst: false })
-    .order("lts_number", { ascending: true })
-    .limit(ROW_LIMIT);
 
-  const { data, error } = await query;
-  if (error) throw new Error(`Analytics query failed: ${error.message}`);
+  // Rebuilt per page so .range() applies to a fresh query each time.
+  const buildQuery = () => {
+    let query = client.from("lts_records").select(ANALYTICS_COLUMNS);
 
-  let rows = (data ?? []) as unknown as AnalyticsRow[];
-  const truncated = rows.length >= ROW_LIMIT;
+    // DB-level filters
+    if (filters.year) {
+      query = query
+        .gte("issue_date", `${filters.year}-01-01`)
+        .lte("issue_date", `${filters.year}-12-31`);
+    } else {
+      if (filters.from_year) {
+        query = query.gte("issue_date", `${filters.from_year}-01-01`);
+      }
+      if (filters.to_year) {
+        query = query.lte("issue_date", `${filters.to_year}-12-31`);
+      }
+    }
+
+    if (filters.region) {
+      // .eq() values are sent literally by PostgREST; do not escape with
+      // sanitizeFilterValue (that is only for .or() filter strings).
+      query = query.eq("normalized_region", filters.region);
+    }
+
+    if (filters.expiryFrom) {
+      query = query.gte("expiry_date", filters.expiryFrom);
+    }
+    if (filters.expiryTo) {
+      query = query.lte("expiry_date", filters.expiryTo);
+    }
+
+    // Stable order across pages: the chosen column, then lts_number (PK).
+    return query
+      .order(order.column, { ascending: order.ascending ?? true, nullsFirst: false })
+      .order("lts_number", { ascending: true });
+  };
+
+  // Page through the full result set. A single .limit() is unsafe: if the
+  // project's PostgREST db-max-rows is below the table size (Supabase
+  // defaults to 1000), one request silently returns a biased slice with no
+  // error and truncated would read false. Stable ordering makes range
+  // paging deterministic.
+  const allRows: AnalyticsRow[] = [];
+  let truncated = false;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    if (from >= MAX_ROWS) {
+      truncated = true;
+      break;
+    }
+    const { data, error } = await buildQuery().range(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(`Analytics query failed: ${error.message}`);
+    const page = (data ?? []) as unknown as AnalyticsRow[];
+    allRows.push(...page);
+    if (page.length < PAGE_SIZE) break; // short page = end of data
+  }
+
+  let rows = allRows;
 
   // Client-side filters
   if (filters.law) {
@@ -256,7 +279,11 @@ export async function aggregateByLaw(
   filters: { year?: number; region?: string } = {}
 ): Promise<ByLawResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
-  return { ...aggregateByLawFromRows(rows, !filters.year), truncated };
+  const result = aggregateByLawFromRows(rows, !filters.year);
+  // A YoY figure computed on a partial dataset would look authoritative but
+  // point the wrong way; suppress it rather than emit a confident wrong number.
+  if (truncated) result.yoy_shift = null;
+  return { ...result, truncated };
 }
 
 export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean): Omit<ByLawResponse, "truncated"> {
@@ -328,7 +355,14 @@ export async function aggregateTrends(
   granularity: "annual" | "quarterly" = "annual"
 ): Promise<TrendsResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
-  return { ...aggregateTrendsFromRows(rows, granularity), truncated };
+  const result = aggregateTrendsFromRows(rows, granularity);
+  // Trend headline numbers are unreliable on a partial dataset; suppress
+  // them when truncated so a consumer cannot mistake them for authoritative.
+  if (truncated) {
+    result.yoy_growth_pct = null;
+    result.peak_period = null;
+  }
+  return { ...result, truncated };
 }
 
 export function aggregateTrendsFromRows(
