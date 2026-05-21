@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "./client";
-import { sanitizeFilterValue } from "./queries";
 import { getTodayPH, getFutureDatePH } from "../utils";
 import type {
   AnalyticsRow,
@@ -86,6 +85,13 @@ export interface FetchFilters {
   status?: "active" | "expired";
   expiryFrom?: string;
   expiryTo?: string;
+  /**
+   * Deterministic ordering applied before the ROW_LIMIT cap. Without it,
+   * a table over ROW_LIMIT returns an arbitrary slice and biases every
+   * aggregate. Expiry-risk paths order by expiry_date asc so the
+   * soonest-expiring records are never the ones dropped by truncation.
+   */
+  orderBy?: { column: "issue_date" | "expiry_date"; ascending?: boolean };
 }
 
 const ROW_LIMIT = 10_000;
@@ -116,7 +122,9 @@ export async function fetchFilteredRows(
   }
 
   if (filters.region) {
-    query = query.eq("normalized_region", sanitizeFilterValue(filters.region));
+    // .eq() values are sent literally by PostgREST; do not escape with
+    // sanitizeFilterValue (that is only for .or() filter strings).
+    query = query.eq("normalized_region", filters.region);
   }
 
   if (filters.expiryFrom) {
@@ -126,7 +134,13 @@ export async function fetchFilteredRows(
     query = query.lte("expiry_date", filters.expiryTo);
   }
 
-  query = query.limit(ROW_LIMIT);
+  // Deterministic order before the cap, with lts_number (PK) as tiebreaker
+  // so a truncated fetch is reproducible rather than an arbitrary slice.
+  const order = filters.orderBy ?? { column: "issue_date" as const, ascending: true };
+  query = query
+    .order(order.column, { ascending: order.ascending ?? true, nullsFirst: false })
+    .order("lts_number", { ascending: true })
+    .limit(ROW_LIMIT);
 
   const { data, error } = await query;
   if (error) throw new Error(`Analytics query failed: ${error.message}`);
@@ -444,6 +458,8 @@ export async function aggregateExpiryRisk(
     ...filters,
     expiryFrom: today,
     expiryTo: futureDate,
+    // Keep the soonest-expiring rows if the window exceeds ROW_LIMIT.
+    orderBy: { column: "expiry_date", ascending: true },
   });
 
   return { ...aggregateExpiryRiskFromRows(rows, today, days), truncated };

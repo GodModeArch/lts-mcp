@@ -520,7 +520,7 @@ describe("aggregateExpiryRiskFromRows", () => {
 
 function createMockBuilder(response: { data: unknown; error: null | { message: string } }) {
   const builder: Record<string, unknown> = {};
-  const chainMethods = ["select", "eq", "gte", "lte", "limit"];
+  const chainMethods = ["select", "eq", "gte", "lte", "order", "limit"];
   for (const method of chainMethods) {
     builder[method] = vi.fn().mockReturnValue(builder);
   }
@@ -541,6 +541,27 @@ describe("fetchFilteredRows", () => {
     expect(builder.limit).toHaveBeenCalledWith(10000);
     expect(result.rows).toEqual([]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("orders by issue_date then lts_number before the cap (deterministic truncation)", async () => {
+    const builder = createMockBuilder({ data: [], error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    await fetchFilteredRows(client);
+    expect(builder.order).toHaveBeenCalledWith("issue_date", { ascending: true, nullsFirst: false });
+    expect(builder.order).toHaveBeenCalledWith("lts_number", { ascending: true });
+  });
+
+  it("honors a custom orderBy (expiry_date asc for expiry-risk path)", async () => {
+    const builder = createMockBuilder({ data: [], error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    await fetchFilteredRows(client, { orderBy: { column: "expiry_date", ascending: true } });
+    expect(builder.order).toHaveBeenCalledWith("expiry_date", { ascending: true, nullsFirst: false });
   });
 
   it("applies year filter as date range", async () => {
