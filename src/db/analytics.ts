@@ -16,18 +16,19 @@ import type {
 
 // ── Pure Helpers ────────────────────────────────────────────────────────────
 
+// Law is encoded in raw_project_type, e.g. "EH Subd - BP 220", "RC - PD 957",
+// "BP220 -", "- PD 957". Other suffixes (NR, EO 648) and blanks normalize to
+// null (unknown). No bare-number fallback: every real law value carries the
+// BP/PD prefix, so matching a stray "220"/"957" would only create false
+// positives in values like "220 sqm" or "Block 957".
 const BP220_RE = /\b(?:bp|b\.?p\.?)\s*220\b/i;
 const PD957_RE = /\b(?:pd|p\.?d\.?)\s*957\b/i;
-const BARE_220_RE = /\b220\b/;
-const BARE_957_RE = /\b957\b/;
 
 export function normalizeLaw(raw: string | null): NormalizedLaw {
   if (!raw || !raw.trim()) return null;
   const s = raw.trim();
   if (BP220_RE.test(s)) return "BP220";
   if (PD957_RE.test(s)) return "PD957";
-  if (BARE_220_RE.test(s)) return "BP220";
-  if (BARE_957_RE.test(s)) return "PD957";
   return null;
 }
 
@@ -71,7 +72,9 @@ const ANALYTICS_COLUMNS = [
   "normalized_region",
   "issue_date",
   "expiry_date",
-  "inferred_project_type",
+  // raw_project_type carries the law (BP 220 / PD 957); inferred_project_type
+  // is the project category (house_and_lot, condominium, ...) and is NOT a law.
+  "raw_project_type",
 ].join(",");
 
 // ── Shared Data Fetcher ─────────────────────────────────────────────────────
@@ -150,7 +153,7 @@ export async function fetchFilteredRows(
 
   // Client-side filters
   if (filters.law) {
-    rows = rows.filter((r) => normalizeLaw(r.inferred_project_type) === filters.law);
+    rows = rows.filter((r) => normalizeLaw(r.raw_project_type) === filters.law);
   }
 
   if (filters.status) {
@@ -182,7 +185,7 @@ export function aggregateByRegionFromRows(rows: AnalyticsRow[], today: string): 
       map.set(region, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
     if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
   }
@@ -226,7 +229,7 @@ export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number
     }
     bucket.count++;
     if (row.normalized_region) bucket.regions.add(row.normalized_region);
-    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
     if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
   }
@@ -260,7 +263,7 @@ export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean
   const map = new Map<string, { count: number; by_region: Map<string, number> }>();
 
   for (const row of rows) {
-    const law = normalizeLaw(row.inferred_project_type) ?? "unknown";
+    const law = normalizeLaw(row.raw_project_type) ?? "unknown";
     let bucket = map.get(law);
     if (!bucket) {
       bucket = { count: 0, by_region: new Map() };
@@ -297,7 +300,7 @@ export function aggregateByLawFromRows(rows: AnalyticsRow[], computeYoy: boolean
         yearBp220.set(year, entry);
       }
       entry.total++;
-      if (normalizeLaw(row.inferred_project_type) === "BP220") entry.bp220++;
+      if (normalizeLaw(row.raw_project_type) === "BP220") entry.bp220++;
     }
 
     const years = [...yearBp220.keys()].sort((a, b) => a - b);
@@ -343,7 +346,7 @@ export function aggregateTrendsFromRows(
       map.set(key, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
   }
 
   const periods: TrendPeriod[] = [...map.entries()]
@@ -410,7 +413,7 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
       map.set(key, bucket);
     }
     bucket.count++;
-    incrementLaw(bucket.by_law, normalizeLaw(row.inferred_project_type));
+    incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
     if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
     else bucket.expired++;
     const dev = row.normalized_developer ?? "Unknown";

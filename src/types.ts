@@ -138,6 +138,8 @@ export interface AnalyticsRow {
   normalized_region: string | null;
   issue_date: string | null;
   expiry_date: string | null;
+  // Law (BP 220 / PD 957) is parsed from raw_project_type, not inferred_project_type.
+  raw_project_type: string | null;
   inferred_project_type: string | null;
 }
 

@@ -39,12 +39,22 @@ describe("normalizeLaw", () => {
     expect(normalizeLaw("P.D. 957")).toBe("PD957");
   });
 
-  it("falls back to bare number match for '220'", () => {
-    expect(normalizeLaw("License under 220")).toBe("BP220");
+  it("normalizes 'BP220' (no space) to BP220", () => {
+    expect(normalizeLaw("BP220")).toBe("BP220");
   });
 
-  it("falls back to bare number match for '957'", () => {
-    expect(normalizeLaw("License under 957")).toBe("PD957");
+  it("normalizes a full raw_project_type value like 'EH Subd - BP 220'", () => {
+    expect(normalizeLaw("EH Subd - BP 220")).toBe("BP220");
+  });
+
+  it("does not match a bare number without a BP/PD prefix (no false positive)", () => {
+    expect(normalizeLaw("220 sqm lot")).toBeNull();
+    expect(normalizeLaw("Block 957")).toBeNull();
+  });
+
+  it("returns null for non-LTS suffixes like 'NR' and 'EO 648'", () => {
+    expect(normalizeLaw("MP - NR")).toBeNull();
+    expect(normalizeLaw("Commercial Subd - EO 648")).toBeNull();
   });
 
   it("returns null for null input", () => {
@@ -162,7 +172,8 @@ function makeRow(overrides: Partial<AnalyticsRow> = {}): AnalyticsRow {
     normalized_region: "NCR",
     issue_date: "2024-06-01",
     expiry_date: "2099-12-31",
-    inferred_project_type: "BP 220",
+    raw_project_type: "EH Subd - BP 220", // law lives here
+    inferred_project_type: "house_and_lot", // project category, not a law
     ...overrides,
   };
 }
@@ -197,9 +208,9 @@ describe("aggregateByRegionFromRows", () => {
 
   it("tracks law breakdown per region", () => {
     const rows = [
-      makeRow({ normalized_region: "NCR", inferred_project_type: "BP 220" }),
-      makeRow({ normalized_region: "NCR", inferred_project_type: "PD 957" }),
-      makeRow({ normalized_region: "NCR", inferred_project_type: null }),
+      makeRow({ normalized_region: "NCR", raw_project_type: "BP 220" }),
+      makeRow({ normalized_region: "NCR", raw_project_type: "PD 957" }),
+      makeRow({ normalized_region: "NCR", raw_project_type: null }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].by_law).toEqual({ BP220: 1, PD957: 1, unknown: 1 });
@@ -276,10 +287,10 @@ describe("aggregateByDeveloperFromRows", () => {
 describe("aggregateByLawFromRows", () => {
   it("groups by normalized law", () => {
     const rows = [
-      makeRow({ inferred_project_type: "BP 220" }),
-      makeRow({ inferred_project_type: "BP 220" }),
-      makeRow({ inferred_project_type: "PD 957" }),
-      makeRow({ inferred_project_type: null }),
+      makeRow({ raw_project_type: "BP 220" }),
+      makeRow({ raw_project_type: "BP 220" }),
+      makeRow({ raw_project_type: "PD 957" }),
+      makeRow({ raw_project_type: null }),
     ];
     const result = aggregateByLawFromRows(rows, false);
     expect(result.total).toBe(4);
@@ -290,9 +301,9 @@ describe("aggregateByLawFromRows", () => {
 
   it("includes by_region sub-array per law", () => {
     const rows = [
-      makeRow({ inferred_project_type: "BP 220", normalized_region: "NCR" }),
-      makeRow({ inferred_project_type: "BP 220", normalized_region: "Region III" }),
-      makeRow({ inferred_project_type: "BP 220", normalized_region: "NCR" }),
+      makeRow({ raw_project_type: "BP 220", normalized_region: "NCR" }),
+      makeRow({ raw_project_type: "BP 220", normalized_region: "Region III" }),
+      makeRow({ raw_project_type: "BP 220", normalized_region: "NCR" }),
     ];
     const result = aggregateByLawFromRows(rows, false);
     const bp220 = result.breakdown.find((b) => b.law === "BP220")!;
@@ -303,11 +314,11 @@ describe("aggregateByLawFromRows", () => {
 
   it("computes yoy_shift when enabled and has 2+ years", () => {
     const rows = [
-      makeRow({ issue_date: "2023-06-01", inferred_project_type: "BP 220" }),
-      makeRow({ issue_date: "2023-06-01", inferred_project_type: "PD 957" }),
-      makeRow({ issue_date: "2024-06-01", inferred_project_type: "BP 220" }),
-      makeRow({ issue_date: "2024-06-01", inferred_project_type: "BP 220" }),
-      makeRow({ issue_date: "2024-06-01", inferred_project_type: "PD 957" }),
+      makeRow({ issue_date: "2023-06-01", raw_project_type: "BP 220" }),
+      makeRow({ issue_date: "2023-06-01", raw_project_type: "PD 957" }),
+      makeRow({ issue_date: "2024-06-01", raw_project_type: "BP 220" }),
+      makeRow({ issue_date: "2024-06-01", raw_project_type: "BP 220" }),
+      makeRow({ issue_date: "2024-06-01", raw_project_type: "PD 957" }),
     ];
     const result = aggregateByLawFromRows(rows, true);
     expect(result.yoy_shift).not.toBeNull();
@@ -598,9 +609,9 @@ describe("fetchFilteredRows", () => {
 
   it("applies client-side law filter", async () => {
     const rows = [
-      { inferred_project_type: "BP 220", expiry_date: "2099-12-31" },
-      { inferred_project_type: "PD 957", expiry_date: "2099-12-31" },
-      { inferred_project_type: null, expiry_date: "2099-12-31" },
+      { raw_project_type: "BP 220", expiry_date: "2099-12-31" },
+      { raw_project_type: "PD 957", expiry_date: "2099-12-31" },
+      { raw_project_type: null, expiry_date: "2099-12-31" },
     ];
     const builder = createMockBuilder({ data: rows, error: null });
     const client = {
@@ -609,13 +620,13 @@ describe("fetchFilteredRows", () => {
 
     const result = await fetchFilteredRows(client, { law: "BP220" });
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].inferred_project_type).toBe("BP 220");
+    expect(result.rows[0].raw_project_type).toBe("BP 220");
   });
 
   it("applies client-side status filter", async () => {
     const rows = [
-      { expiry_date: "2099-12-31", inferred_project_type: null },
-      { expiry_date: "2020-01-01", inferred_project_type: null },
+      { expiry_date: "2099-12-31", raw_project_type: null },
+      { expiry_date: "2020-01-01", raw_project_type: null },
     ];
     const builder = createMockBuilder({ data: rows, error: null });
     const client = {
@@ -630,7 +641,7 @@ describe("fetchFilteredRows", () => {
   it("sets truncated=true when row limit is hit", async () => {
     const rows = Array.from({ length: 10000 }, (_, i) => ({
       lts_number: `LTS-${i}`,
-      inferred_project_type: null,
+      raw_project_type: null,
       expiry_date: "2099-12-31",
     }));
     const builder = createMockBuilder({ data: rows, error: null });
