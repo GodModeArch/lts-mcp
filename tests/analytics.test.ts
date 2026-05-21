@@ -155,14 +155,14 @@ describe("getPeriodKey", () => {
 function makeRow(overrides: Partial<AnalyticsRow> = {}): AnalyticsRow {
   return {
     lts_number: "LTS-001",
-    scraped_project_name: "Test Project",
-    scraped_developer: "Test Developer",
-    scraped_city: "Makati",
-    scraped_province: "Metro Manila",
-    scraped_region: "NCR",
-    scraped_issue_date: "2024-06-01",
-    scraped_expiry_date: "2099-12-31",
-    scraped_project_type: "BP 220",
+    normalized_project_name: "Test Project",
+    normalized_developer: "Test Developer",
+    normalized_city: "Makati",
+    normalized_province: "Metro Manila",
+    normalized_region: "NCR",
+    issue_date: "2024-06-01",
+    expiry_date: "2099-12-31",
+    inferred_project_type: "BP 220",
     ...overrides,
   };
 }
@@ -170,9 +170,9 @@ function makeRow(overrides: Partial<AnalyticsRow> = {}): AnalyticsRow {
 describe("aggregateByRegionFromRows", () => {
   it("groups by region with correct counts", () => {
     const rows = [
-      makeRow({ scraped_region: "NCR" }),
-      makeRow({ scraped_region: "NCR" }),
-      makeRow({ scraped_region: "Region IV-A" }),
+      makeRow({ normalized_region: "NCR" }),
+      makeRow({ normalized_region: "NCR" }),
+      makeRow({ normalized_region: "Region IV-A" }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.total).toBe(3);
@@ -185,10 +185,10 @@ describe("aggregateByRegionFromRows", () => {
 
   it("computes share_pct correctly", () => {
     const rows = [
-      makeRow({ scraped_region: "NCR" }),
-      makeRow({ scraped_region: "NCR" }),
-      makeRow({ scraped_region: "NCR" }),
-      makeRow({ scraped_region: "Region III" }),
+      makeRow({ normalized_region: "NCR" }),
+      makeRow({ normalized_region: "NCR" }),
+      makeRow({ normalized_region: "NCR" }),
+      makeRow({ normalized_region: "Region III" }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].share_pct).toBe(75);
@@ -197,9 +197,9 @@ describe("aggregateByRegionFromRows", () => {
 
   it("tracks law breakdown per region", () => {
     const rows = [
-      makeRow({ scraped_region: "NCR", scraped_project_type: "BP 220" }),
-      makeRow({ scraped_region: "NCR", scraped_project_type: "PD 957" }),
-      makeRow({ scraped_region: "NCR", scraped_project_type: null }),
+      makeRow({ normalized_region: "NCR", inferred_project_type: "BP 220" }),
+      makeRow({ normalized_region: "NCR", inferred_project_type: "PD 957" }),
+      makeRow({ normalized_region: "NCR", inferred_project_type: null }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].by_law).toEqual({ BP220: 1, PD957: 1, unknown: 1 });
@@ -207,8 +207,8 @@ describe("aggregateByRegionFromRows", () => {
 
   it("tracks active/expired split", () => {
     const rows = [
-      makeRow({ scraped_region: "NCR", scraped_expiry_date: "2099-12-31" }),
-      makeRow({ scraped_region: "NCR", scraped_expiry_date: "2020-01-01" }),
+      makeRow({ normalized_region: "NCR", expiry_date: "2099-12-31" }),
+      makeRow({ normalized_region: "NCR", expiry_date: "2020-01-01" }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].active).toBe(1);
@@ -216,7 +216,7 @@ describe("aggregateByRegionFromRows", () => {
   });
 
   it("maps null region to Unknown", () => {
-    const rows = [makeRow({ scraped_region: null })];
+    const rows = [makeRow({ normalized_region: null })];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].region).toBe("Unknown");
   });
@@ -229,12 +229,12 @@ describe("aggregateByRegionFromRows", () => {
 
   it("sorts by count descending", () => {
     const rows = [
-      makeRow({ scraped_region: "A" }),
-      makeRow({ scraped_region: "B" }),
-      makeRow({ scraped_region: "B" }),
-      makeRow({ scraped_region: "B" }),
-      makeRow({ scraped_region: "C" }),
-      makeRow({ scraped_region: "C" }),
+      makeRow({ normalized_region: "A" }),
+      makeRow({ normalized_region: "B" }),
+      makeRow({ normalized_region: "B" }),
+      makeRow({ normalized_region: "B" }),
+      makeRow({ normalized_region: "C" }),
+      makeRow({ normalized_region: "C" }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions.map((r) => r.region)).toEqual(["B", "C", "A"]);
@@ -244,9 +244,9 @@ describe("aggregateByRegionFromRows", () => {
 describe("aggregateByDeveloperFromRows", () => {
   it("groups by developer with regions tracked", () => {
     const rows = [
-      makeRow({ scraped_developer: "DevA", scraped_region: "NCR" }),
-      makeRow({ scraped_developer: "DevA", scraped_region: "Region III" }),
-      makeRow({ scraped_developer: "DevB", scraped_region: "NCR" }),
+      makeRow({ normalized_developer: "DevA", normalized_region: "NCR" }),
+      makeRow({ normalized_developer: "DevA", normalized_region: "Region III" }),
+      makeRow({ normalized_developer: "DevB", normalized_region: "NCR" }),
     ];
     const result = aggregateByDeveloperFromRows(rows, 25, "2025-06-01");
     expect(result.total).toBe(3);
@@ -256,10 +256,10 @@ describe("aggregateByDeveloperFromRows", () => {
 
   it("applies limit", () => {
     const rows = [
-      makeRow({ scraped_developer: "A" }),
-      makeRow({ scraped_developer: "A" }),
-      makeRow({ scraped_developer: "B" }),
-      makeRow({ scraped_developer: "C" }),
+      makeRow({ normalized_developer: "A" }),
+      makeRow({ normalized_developer: "A" }),
+      makeRow({ normalized_developer: "B" }),
+      makeRow({ normalized_developer: "C" }),
     ];
     const result = aggregateByDeveloperFromRows(rows, 2, "2025-06-01");
     expect(result.developers).toHaveLength(2);
@@ -267,7 +267,7 @@ describe("aggregateByDeveloperFromRows", () => {
   });
 
   it("maps null developer to Unknown", () => {
-    const rows = [makeRow({ scraped_developer: null })];
+    const rows = [makeRow({ normalized_developer: null })];
     const result = aggregateByDeveloperFromRows(rows, 25, "2025-06-01");
     expect(result.developers[0].developer).toBe("Unknown");
   });
@@ -276,10 +276,10 @@ describe("aggregateByDeveloperFromRows", () => {
 describe("aggregateByLawFromRows", () => {
   it("groups by normalized law", () => {
     const rows = [
-      makeRow({ scraped_project_type: "BP 220" }),
-      makeRow({ scraped_project_type: "BP 220" }),
-      makeRow({ scraped_project_type: "PD 957" }),
-      makeRow({ scraped_project_type: null }),
+      makeRow({ inferred_project_type: "BP 220" }),
+      makeRow({ inferred_project_type: "BP 220" }),
+      makeRow({ inferred_project_type: "PD 957" }),
+      makeRow({ inferred_project_type: null }),
     ];
     const result = aggregateByLawFromRows(rows, false);
     expect(result.total).toBe(4);
@@ -290,9 +290,9 @@ describe("aggregateByLawFromRows", () => {
 
   it("includes by_region sub-array per law", () => {
     const rows = [
-      makeRow({ scraped_project_type: "BP 220", scraped_region: "NCR" }),
-      makeRow({ scraped_project_type: "BP 220", scraped_region: "Region III" }),
-      makeRow({ scraped_project_type: "BP 220", scraped_region: "NCR" }),
+      makeRow({ inferred_project_type: "BP 220", normalized_region: "NCR" }),
+      makeRow({ inferred_project_type: "BP 220", normalized_region: "Region III" }),
+      makeRow({ inferred_project_type: "BP 220", normalized_region: "NCR" }),
     ];
     const result = aggregateByLawFromRows(rows, false);
     const bp220 = result.breakdown.find((b) => b.law === "BP220")!;
@@ -303,11 +303,11 @@ describe("aggregateByLawFromRows", () => {
 
   it("computes yoy_shift when enabled and has 2+ years", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2023-06-01", scraped_project_type: "BP 220" }),
-      makeRow({ scraped_issue_date: "2023-06-01", scraped_project_type: "PD 957" }),
-      makeRow({ scraped_issue_date: "2024-06-01", scraped_project_type: "BP 220" }),
-      makeRow({ scraped_issue_date: "2024-06-01", scraped_project_type: "BP 220" }),
-      makeRow({ scraped_issue_date: "2024-06-01", scraped_project_type: "PD 957" }),
+      makeRow({ issue_date: "2023-06-01", inferred_project_type: "BP 220" }),
+      makeRow({ issue_date: "2023-06-01", inferred_project_type: "PD 957" }),
+      makeRow({ issue_date: "2024-06-01", inferred_project_type: "BP 220" }),
+      makeRow({ issue_date: "2024-06-01", inferred_project_type: "BP 220" }),
+      makeRow({ issue_date: "2024-06-01", inferred_project_type: "PD 957" }),
     ];
     const result = aggregateByLawFromRows(rows, true);
     expect(result.yoy_shift).not.toBeNull();
@@ -319,15 +319,15 @@ describe("aggregateByLawFromRows", () => {
 
   it("returns null yoy_shift when disabled", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2023-06-01" }),
-      makeRow({ scraped_issue_date: "2024-06-01" }),
+      makeRow({ issue_date: "2023-06-01" }),
+      makeRow({ issue_date: "2024-06-01" }),
     ];
     const result = aggregateByLawFromRows(rows, false);
     expect(result.yoy_shift).toBeNull();
   });
 
   it("returns null yoy_shift when less than 2 years of data", () => {
-    const rows = [makeRow({ scraped_issue_date: "2024-06-01" })];
+    const rows = [makeRow({ issue_date: "2024-06-01" })];
     const result = aggregateByLawFromRows(rows, true);
     expect(result.yoy_shift).toBeNull();
   });
@@ -336,9 +336,9 @@ describe("aggregateByLawFromRows", () => {
 describe("aggregateTrendsFromRows", () => {
   it("groups by annual periods sorted chronologically", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2024-03-01" }),
-      makeRow({ scraped_issue_date: "2023-06-01" }),
-      makeRow({ scraped_issue_date: "2024-09-01" }),
+      makeRow({ issue_date: "2024-03-01" }),
+      makeRow({ issue_date: "2023-06-01" }),
+      makeRow({ issue_date: "2024-09-01" }),
     ];
     const result = aggregateTrendsFromRows(rows, "annual");
     expect(result.periods).toHaveLength(2);
@@ -350,9 +350,9 @@ describe("aggregateTrendsFromRows", () => {
 
   it("groups by quarterly periods", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2024-01-15" }),
-      makeRow({ scraped_issue_date: "2024-04-15" }),
-      makeRow({ scraped_issue_date: "2024-01-20" }),
+      makeRow({ issue_date: "2024-01-15" }),
+      makeRow({ issue_date: "2024-04-15" }),
+      makeRow({ issue_date: "2024-01-20" }),
     ];
     const result = aggregateTrendsFromRows(rows, "quarterly");
     expect(result.periods).toHaveLength(2);
@@ -364,8 +364,8 @@ describe("aggregateTrendsFromRows", () => {
 
   it("excludes rows with null issue date", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2024-01-01" }),
-      makeRow({ scraped_issue_date: null }),
+      makeRow({ issue_date: "2024-01-01" }),
+      makeRow({ issue_date: null }),
     ];
     const result = aggregateTrendsFromRows(rows, "annual");
     expect(result.total).toBe(1);
@@ -373,9 +373,9 @@ describe("aggregateTrendsFromRows", () => {
 
   it("identifies peak period", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2023-01-01" }),
-      makeRow({ scraped_issue_date: "2024-01-01" }),
-      makeRow({ scraped_issue_date: "2024-06-01" }),
+      makeRow({ issue_date: "2023-01-01" }),
+      makeRow({ issue_date: "2024-01-01" }),
+      makeRow({ issue_date: "2024-06-01" }),
     ];
     const result = aggregateTrendsFromRows(rows, "annual");
     expect(result.peak_period).toBe("2024");
@@ -383,11 +383,11 @@ describe("aggregateTrendsFromRows", () => {
 
   it("computes yoy_growth_pct for annual", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2023-01-01" }),
-      makeRow({ scraped_issue_date: "2023-06-01" }),
-      makeRow({ scraped_issue_date: "2024-01-01" }),
-      makeRow({ scraped_issue_date: "2024-06-01" }),
-      makeRow({ scraped_issue_date: "2024-09-01" }),
+      makeRow({ issue_date: "2023-01-01" }),
+      makeRow({ issue_date: "2023-06-01" }),
+      makeRow({ issue_date: "2024-01-01" }),
+      makeRow({ issue_date: "2024-06-01" }),
+      makeRow({ issue_date: "2024-09-01" }),
     ];
     const result = aggregateTrendsFromRows(rows, "annual");
     // 2023: 2, 2024: 3, growth = (3-2)/2 = 50%
@@ -396,8 +396,8 @@ describe("aggregateTrendsFromRows", () => {
 
   it("returns null yoy_growth_pct for quarterly", () => {
     const rows = [
-      makeRow({ scraped_issue_date: "2024-01-01" }),
-      makeRow({ scraped_issue_date: "2024-04-01" }),
+      makeRow({ issue_date: "2024-01-01" }),
+      makeRow({ issue_date: "2024-04-01" }),
     ];
     const result = aggregateTrendsFromRows(rows, "quarterly");
     expect(result.yoy_growth_pct).toBeNull();
@@ -413,9 +413,9 @@ describe("aggregateTrendsFromRows", () => {
 describe("aggregateByCityFromRows", () => {
   it("groups by city with province and region", () => {
     const rows = [
-      makeRow({ scraped_city: "Makati", scraped_province: "Metro Manila", scraped_region: "NCR" }),
-      makeRow({ scraped_city: "Makati", scraped_province: "Metro Manila", scraped_region: "NCR" }),
-      makeRow({ scraped_city: "Taguig", scraped_province: "Metro Manila", scraped_region: "NCR" }),
+      makeRow({ normalized_city: "Makati", normalized_province: "Metro Manila", normalized_region: "NCR" }),
+      makeRow({ normalized_city: "Makati", normalized_province: "Metro Manila", normalized_region: "NCR" }),
+      makeRow({ normalized_city: "Taguig", normalized_province: "Metro Manila", normalized_region: "NCR" }),
     ];
     const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.total).toBe(3);
@@ -426,9 +426,9 @@ describe("aggregateByCityFromRows", () => {
 
   it("identifies top developer per city", () => {
     const rows = [
-      makeRow({ scraped_city: "Makati", scraped_developer: "Ayala" }),
-      makeRow({ scraped_city: "Makati", scraped_developer: "Ayala" }),
-      makeRow({ scraped_city: "Makati", scraped_developer: "SMDC" }),
+      makeRow({ normalized_city: "Makati", normalized_developer: "Ayala" }),
+      makeRow({ normalized_city: "Makati", normalized_developer: "Ayala" }),
+      makeRow({ normalized_city: "Makati", normalized_developer: "SMDC" }),
     ];
     const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities[0].top_developer).toBe("Ayala");
@@ -436,26 +436,26 @@ describe("aggregateByCityFromRows", () => {
 
   it("applies limit", () => {
     const rows = [
-      makeRow({ scraped_city: "A" }),
-      makeRow({ scraped_city: "A" }),
-      makeRow({ scraped_city: "B" }),
-      makeRow({ scraped_city: "C" }),
+      makeRow({ normalized_city: "A" }),
+      makeRow({ normalized_city: "A" }),
+      makeRow({ normalized_city: "B" }),
+      makeRow({ normalized_city: "C" }),
     ];
     const result = aggregateByCityFromRows(rows, 2, "2025-06-01");
     expect(result.cities).toHaveLength(2);
   });
 
   it("maps null city to Unknown", () => {
-    const rows = [makeRow({ scraped_city: null })];
+    const rows = [makeRow({ normalized_city: null })];
     const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities[0].city).toBe("Unknown");
   });
 
   it("keeps same-name cities in different provinces separate", () => {
     const rows = [
-      makeRow({ scraped_city: "San Jose", scraped_province: "Batangas", scraped_region: "Region IV-A" }),
-      makeRow({ scraped_city: "San Jose", scraped_province: "Batangas", scraped_region: "Region IV-A" }),
-      makeRow({ scraped_city: "San Jose", scraped_province: "Nueva Ecija", scraped_region: "Region III" }),
+      makeRow({ normalized_city: "San Jose", normalized_province: "Batangas", normalized_region: "Region IV-A" }),
+      makeRow({ normalized_city: "San Jose", normalized_province: "Batangas", normalized_region: "Region IV-A" }),
+      makeRow({ normalized_city: "San Jose", normalized_province: "Nueva Ecija", normalized_region: "Region III" }),
     ];
     const result = aggregateByCityFromRows(rows, 25, "2025-06-01");
     expect(result.cities).toHaveLength(2);
@@ -469,8 +469,8 @@ describe("aggregateByCityFromRows", () => {
 describe("aggregateExpiryRiskFromRows", () => {
   it("computes days_remaining and sorts by urgency", () => {
     const rows = [
-      makeRow({ lts_number: "LTS-B", scraped_expiry_date: "2025-04-01" }),
-      makeRow({ lts_number: "LTS-A", scraped_expiry_date: "2025-03-01" }),
+      makeRow({ lts_number: "LTS-B", expiry_date: "2025-04-01" }),
+      makeRow({ lts_number: "LTS-A", expiry_date: "2025-03-01" }),
     ];
     const result = aggregateExpiryRiskFromRows(rows, "2025-02-01", 90);
     expect(result.records).toHaveLength(2);
@@ -482,8 +482,8 @@ describe("aggregateExpiryRiskFromRows", () => {
 
   it("filters out rows with null expiry date", () => {
     const rows = [
-      makeRow({ scraped_expiry_date: "2025-03-01" }),
-      makeRow({ scraped_expiry_date: null }),
+      makeRow({ expiry_date: "2025-03-01" }),
+      makeRow({ expiry_date: null }),
     ];
     const result = aggregateExpiryRiskFromRows(rows, "2025-02-01", 90);
     expect(result.total).toBe(1);
@@ -491,9 +491,9 @@ describe("aggregateExpiryRiskFromRows", () => {
 
   it("builds summary by region and developer", () => {
     const rows = [
-      makeRow({ scraped_region: "NCR", scraped_developer: "DevA", scraped_expiry_date: "2025-03-01" }),
-      makeRow({ scraped_region: "NCR", scraped_developer: "DevB", scraped_expiry_date: "2025-03-15" }),
-      makeRow({ scraped_region: "Region III", scraped_developer: "DevA", scraped_expiry_date: "2025-04-01" }),
+      makeRow({ normalized_region: "NCR", normalized_developer: "DevA", expiry_date: "2025-03-01" }),
+      makeRow({ normalized_region: "NCR", normalized_developer: "DevB", expiry_date: "2025-03-15" }),
+      makeRow({ normalized_region: "Region III", normalized_developer: "DevA", expiry_date: "2025-04-01" }),
     ];
     const result = aggregateExpiryRiskFromRows(rows, "2025-02-01", 90);
     expect(result.summary.by_region).toHaveLength(2);
@@ -536,7 +536,7 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     const result = await fetchFilteredRows(client);
-    expect(client.from).toHaveBeenCalledWith("lts_verification_queue");
+    expect(client.from).toHaveBeenCalledWith("lts_records");
     expect(builder.select).toHaveBeenCalled();
     expect(builder.limit).toHaveBeenCalledWith(10000);
     expect(result.rows).toEqual([]);
@@ -550,8 +550,8 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     await fetchFilteredRows(client, { year: 2024 });
-    expect(builder.gte).toHaveBeenCalledWith("scraped_issue_date", "2024-01-01");
-    expect(builder.lte).toHaveBeenCalledWith("scraped_issue_date", "2024-12-31");
+    expect(builder.gte).toHaveBeenCalledWith("issue_date", "2024-01-01");
+    expect(builder.lte).toHaveBeenCalledWith("issue_date", "2024-12-31");
   });
 
   it("applies region filter", async () => {
@@ -561,7 +561,7 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     await fetchFilteredRows(client, { region: "NCR" });
-    expect(builder.eq).toHaveBeenCalledWith("scraped_region", "NCR");
+    expect(builder.eq).toHaveBeenCalledWith("normalized_region", "NCR");
   });
 
   it("applies expiry date range filters", async () => {
@@ -571,15 +571,15 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     await fetchFilteredRows(client, { expiryFrom: "2025-01-01", expiryTo: "2025-03-31" });
-    expect(builder.gte).toHaveBeenCalledWith("scraped_expiry_date", "2025-01-01");
-    expect(builder.lte).toHaveBeenCalledWith("scraped_expiry_date", "2025-03-31");
+    expect(builder.gte).toHaveBeenCalledWith("expiry_date", "2025-01-01");
+    expect(builder.lte).toHaveBeenCalledWith("expiry_date", "2025-03-31");
   });
 
   it("applies client-side law filter", async () => {
     const rows = [
-      { scraped_project_type: "BP 220", scraped_expiry_date: "2099-12-31" },
-      { scraped_project_type: "PD 957", scraped_expiry_date: "2099-12-31" },
-      { scraped_project_type: null, scraped_expiry_date: "2099-12-31" },
+      { inferred_project_type: "BP 220", expiry_date: "2099-12-31" },
+      { inferred_project_type: "PD 957", expiry_date: "2099-12-31" },
+      { inferred_project_type: null, expiry_date: "2099-12-31" },
     ];
     const builder = createMockBuilder({ data: rows, error: null });
     const client = {
@@ -588,13 +588,13 @@ describe("fetchFilteredRows", () => {
 
     const result = await fetchFilteredRows(client, { law: "BP220" });
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].scraped_project_type).toBe("BP 220");
+    expect(result.rows[0].inferred_project_type).toBe("BP 220");
   });
 
   it("applies client-side status filter", async () => {
     const rows = [
-      { scraped_expiry_date: "2099-12-31", scraped_project_type: null },
-      { scraped_expiry_date: "2020-01-01", scraped_project_type: null },
+      { expiry_date: "2099-12-31", inferred_project_type: null },
+      { expiry_date: "2020-01-01", inferred_project_type: null },
     ];
     const builder = createMockBuilder({ data: rows, error: null });
     const client = {
@@ -603,14 +603,14 @@ describe("fetchFilteredRows", () => {
 
     const result = await fetchFilteredRows(client, { status: "active" });
     expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].scraped_expiry_date).toBe("2099-12-31");
+    expect(result.rows[0].expiry_date).toBe("2099-12-31");
   });
 
   it("sets truncated=true when row limit is hit", async () => {
     const rows = Array.from({ length: 10000 }, (_, i) => ({
       lts_number: `LTS-${i}`,
-      scraped_project_type: null,
-      scraped_expiry_date: "2099-12-31",
+      inferred_project_type: null,
+      expiry_date: "2099-12-31",
     }));
     const builder = createMockBuilder({ data: rows, error: null });
     const client = {
@@ -637,7 +637,7 @@ describe("fetchFilteredRows", () => {
     } as unknown as import("../src/db/client").SupabaseClient;
 
     await fetchFilteredRows(client, { from_year: 2022, to_year: 2024 });
-    expect(builder.gte).toHaveBeenCalledWith("scraped_issue_date", "2022-01-01");
-    expect(builder.lte).toHaveBeenCalledWith("scraped_issue_date", "2024-12-31");
+    expect(builder.gte).toHaveBeenCalledWith("issue_date", "2022-01-01");
+    expect(builder.lte).toHaveBeenCalledWith("issue_date", "2024-12-31");
   });
 });

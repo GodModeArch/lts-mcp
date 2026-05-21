@@ -9,6 +9,14 @@ export interface LTSRecordRow {
   lts_number: string;
   raw_project_name: string;
   raw_developer: string | null;
+  raw_city: string | null;
+  raw_province: string | null;
+  raw_region: string | null;
+  raw_issue_date: string | null;
+  raw_expiry_date: string | null;
+  raw_project_type: string | null;
+  raw_barangay: string | null;
+  raw_units: string | null;
   normalized_project_name: string;
   base_project_name: string;
   phase_name: string | null;
@@ -25,6 +33,8 @@ export interface LTSRecordRow {
   parsing_notes: string[] | null;
   project_id: string | null;
   source_url: string | null;
+  scraped_at: string | null;
+  imported_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -49,6 +59,7 @@ export interface ProjectLTSRow {
   document_url: string | null;
   source: LTSSource;
   source_url: string | null;
+  queue_item_id: string | null;
   is_primary: boolean;
   display_order: number;
   notes: string | null;
