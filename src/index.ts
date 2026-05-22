@@ -13,12 +13,12 @@ import {
   healthHttpStatus,
 } from "./health";
 
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.0.1";
 
 export class LtsMCP extends McpAgent {
   server = new McpServer({
     name: "ren-lts",
-    version: "1.0.0",
+    version: SERVER_VERSION,
   });
 
   async init() {
