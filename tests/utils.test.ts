@@ -26,10 +26,11 @@ describe("getFutureDatePH", () => {
     expect(getFutureDatePH(0)).toBe(getTodayPH());
   });
 
-  it("with 1 day returns tomorrow", () => {
-    const today = new Date();
-    today.setDate(today.getDate() + 1);
-    const expected = today.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  it("with 1 day returns the day after the Manila date (timezone-independent)", () => {
+    const [y, m, d] = getTodayPH().split("-").map(Number);
+    const base = new Date(Date.UTC(y, m - 1, d));
+    base.setUTCDate(base.getUTCDate() + 1);
+    const expected = base.toISOString().slice(0, 10);
     expect(getFutureDatePH(1)).toBe(expected);
   });
 
