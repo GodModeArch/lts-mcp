@@ -8,9 +8,15 @@ export function getTodayPH(): string {
 }
 
 export function getFutureDatePH(days: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return date.toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  // Anchor on the Manila calendar day, then add days with pure UTC date math.
+  // The previous version did setDate() in the runtime timezone before
+  // formatting in Manila, so on a UTC runtime (Cloudflare Workers) near PH
+  // midnight the base day and the formatted day could disagree, throwing the
+  // expiry window off by one. Anchoring on getTodayPH() removes that drift.
+  const [y, m, d] = getTodayPH().split("-").map(Number);
+  const base = new Date(Date.UTC(y, m - 1, d));
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
 }
 
 // -- Logging --

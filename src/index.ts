@@ -5,6 +5,7 @@ import { buildMeta } from "./response";
 import type { ApiMeta } from "./response";
 import { registerReadTools } from "./tools/read";
 import { registerMaintenanceTools } from "./tools/maintenance";
+import { registerAnalyticsTools } from "./tools/analytics";
 
 export class LtsMCP extends McpAgent {
   server = new McpServer({
@@ -20,6 +21,7 @@ export class LtsMCP extends McpAgent {
 
     registerReadTools(this.server, client, meta);
     registerMaintenanceTools(this.server, client, meta);
+    registerAnalyticsTools(this.server, client, meta);
   }
 }
 

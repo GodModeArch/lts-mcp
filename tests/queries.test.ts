@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   search,
-  getQueueItems,
+  getLTSRecordItems,
   getProjectLTS,
   findProjectByName,
   checkLTSNumber,
@@ -16,25 +16,28 @@ interface MockResponse {
   count?: number | null;
 }
 
+const CHAIN_METHODS = [
+  "select",
+  "eq",
+  "neq",
+  "gt",
+  "gte",
+  "lte",
+  "or",
+  "ilike",
+  "not",
+  "is",
+  "order",
+  "range",
+  "limit",
+  "single",
+  "maybeSingle",
+];
+
 function createMockBuilder(response: MockResponse) {
   const builder: Record<string, unknown> = {};
-  const chainMethods = [
-    "select",
-    "eq",
-    "gt",
-    "gte",
-    "lte",
-    "or",
-    "ilike",
-    "not",
-    "order",
-    "range",
-    "limit",
-    "single",
-    "maybeSingle",
-  ];
 
-  for (const method of chainMethods) {
+  for (const method of CHAIN_METHODS) {
     builder[method] = vi.fn().mockReturnValue(builder);
   }
 
@@ -72,14 +75,19 @@ function createMockClient(overrides: {
   return client as unknown as import("../src/db/client").SupabaseClient;
 }
 
+type Builders = Record<string, Record<string, ReturnType<typeof vi.fn>>>;
+function buildersOf(client: unknown): Builders {
+  return (client as unknown as { _builders: Builders })._builders;
+}
+
 // -- search() --
 
 describe("search", () => {
   it("returns empty results for empty query", async () => {
     const client = createMockClient();
     const result = await search(client, "");
-    expect(result.queue.items).toEqual([]);
-    expect(result.queue.total).toBe(0);
+    expect(result.records.items).toEqual([]);
+    expect(result.records.total).toBe(0);
     expect(result.projects.items).toEqual([]);
     expect(result.projects.total).toBe(0);
   });
@@ -87,78 +95,91 @@ describe("search", () => {
   it("returns empty results for whitespace-only query", async () => {
     const client = createMockClient();
     const result = await search(client, "   ");
-    expect(result.queue.items).toEqual([]);
+    expect(result.records.items).toEqual([]);
     expect(result.projects.items).toEqual([]);
   });
 
-  it("calls Supabase with correct or filter", async () => {
+  it("queries lts_records and projects tables", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
         projects: { data: [], error: null, count: 0 },
       },
     });
 
     await search(client, "test");
 
-    expect(client.from).toHaveBeenCalledWith("lts_verification_queue");
+    expect(client.from).toHaveBeenCalledWith("lts_records");
     expect(client.from).toHaveBeenCalledWith("projects");
+  });
+
+  it("excludes low-confidence records from search", async () => {
+    const client = createMockClient({
+      from: {
+        lts_records: { data: [], error: null, count: 0 },
+        projects: { data: [], error: null, count: 0 },
+      },
+    });
+
+    await search(client, "test");
+    const builder = buildersOf(client).lts_records;
+    expect(builder.neq).toHaveBeenCalledWith("confidence", "low");
   });
 
   it("respects pagination options", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
         projects: { data: [], error: null, count: 0 },
       },
     });
 
     const result = await search(client, "test", { limit: 10, offset: 5 });
-    expect(result.queue.limit).toBe(10);
-    expect(result.queue.offset).toBe(5);
+    expect(result.records.limit).toBe(10);
+    expect(result.records.offset).toBe(5);
   });
 
   it("computes hasMore correctly when more results exist", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [{ id: "1" }], error: null, count: 50 },
+        lts_records: { data: [{ lts_number: "LTS-1" }], error: null, count: 50 },
         projects: { data: [{ id: "2" }], error: null, count: 30 },
       },
     });
 
     const result = await search(client, "test", { limit: 20, offset: 0 });
-    expect(result.queue.hasMore).toBe(true);
+    expect(result.records.hasMore).toBe(true);
     expect(result.projects.hasMore).toBe(true);
   });
 
   it("computes hasMore as false at end of results", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [{ id: "1" }], error: null, count: 5 },
+        lts_records: { data: [{ lts_number: "LTS-1" }], error: null, count: 5 },
         projects: { data: [{ id: "2" }], error: null, count: 3 },
       },
     });
 
     const result = await search(client, "test", { limit: 20, offset: 0 });
-    expect(result.queue.hasMore).toBe(false);
+    expect(result.records.hasMore).toBe(false);
     expect(result.projects.hasMore).toBe(false);
   });
 
-  it("throws on queue search error", async () => {
+  it("throws on records search error", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: null, error: { message: "db error" }, count: null },
+        lts_records: { data: null, error: { message: "db error" }, count: null },
         projects: { data: [], error: null, count: 0 },
       },
     });
 
-    await expect(search(client, "test")).rejects.toThrow("Queue search failed");
+    await expect(search(client, "test")).rejects.toThrow("Records search failed");
   });
 
   it("throws on project search error", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
         projects: { data: null, error: { message: "db error" }, count: null },
       },
     });
@@ -167,68 +188,92 @@ describe("search", () => {
   });
 });
 
-// -- getQueueItems() --
+// -- getLTSRecordItems() --
 
-describe("getQueueItems", () => {
+describe("getLTSRecordItems", () => {
   it("returns paginated response with defaults", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    const result = await getQueueItems(client);
+    const result = await getLTSRecordItems(client);
     expect(result.items).toEqual([]);
     expect(result.limit).toBe(20);
     expect(result.offset).toBe(0);
     expect(result.hasMore).toBe(false);
   });
 
-  it("applies status filter", async () => {
+  it("always excludes low-confidence records", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { status: "pending" });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.eq).toHaveBeenCalledWith("match_status", "pending");
+    await getLTSRecordItems(client);
+    const builder = buildersOf(client).lts_records;
+    expect(builder.neq).toHaveBeenCalledWith("confidence", "low");
   });
 
-  it("applies region filter", async () => {
+  it("applies confidence filter", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { region: "NCR" });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.eq).toHaveBeenCalledWith("scraped_region", "NCR");
+    await getLTSRecordItems(client, { confidence: "high" });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.eq).toHaveBeenCalledWith("confidence", "high");
   });
 
-  it("applies minScore filter including 0", async () => {
+  it("applies region filter on normalized_region", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { minScore: 0 });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.gte).toHaveBeenCalledWith("match_score", 0);
+    await getLTSRecordItems(client, { region: "NCR" });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.eq).toHaveBeenCalledWith("normalized_region", "NCR");
+  });
+
+  it("applies linked=true filter (has project_id)", async () => {
+    const client = createMockClient({
+      from: {
+        lts_records: { data: [], error: null, count: 0 },
+      },
+    });
+
+    await getLTSRecordItems(client, { linked: true });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.not).toHaveBeenCalledWith("project_id", "is", null);
+  });
+
+  it("applies linked=false filter (no project_id)", async () => {
+    const client = createMockClient({
+      from: {
+        lts_records: { data: [], error: null, count: 0 },
+      },
+    });
+
+    await getLTSRecordItems(client, { linked: false });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.is).toHaveBeenCalledWith("project_id", null);
   });
 
   it("applies search filter with sanitization", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { search: "test,inject" });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
+    await getLTSRecordItems(client, { search: "test,inject" });
+    const builder = buildersOf(client).lts_records;
     // The comma in the search should be escaped
     expect(builder.or).toHaveBeenCalled();
     const orArg = (builder.or as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
@@ -236,50 +281,50 @@ describe("getQueueItems", () => {
     expect(orArg).not.toContain("test,inject");
   });
 
-  it("sorts by match_score by default (descending)", async () => {
+  it("sorts by created_at descending by default", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client);
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.order).toHaveBeenCalledWith("match_score", { ascending: false, nullsFirst: false });
+    await getLTSRecordItems(client);
+    const builder = buildersOf(client).lts_records;
+    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false, nullsFirst: false });
   });
 
-  it("sorts by scraped_expiry_date when specified", async () => {
+  it("sorts by expiry_date when specified", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { sortBy: "scraped_expiry_date", sortOrder: "asc" });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.order).toHaveBeenCalledWith("scraped_expiry_date", { ascending: true, nullsFirst: false });
+    await getLTSRecordItems(client, { sortBy: "expiry_date", sortOrder: "asc" });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.order).toHaveBeenCalledWith("expiry_date", { ascending: true, nullsFirst: false });
   });
 
-  it("sorts by created_at when specified", async () => {
+  it("sorts by normalized_project_name when specified", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: [], error: null, count: 0 },
+        lts_records: { data: [], error: null, count: 0 },
       },
     });
 
-    await getQueueItems(client, { sortBy: "created_at" });
-    const builder = (client as unknown as { _builders: Record<string, Record<string, ReturnType<typeof vi.fn>>> })._builders.lts_verification_queue;
-    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    await getLTSRecordItems(client, { sortBy: "normalized_project_name", sortOrder: "asc" });
+    const builder = buildersOf(client).lts_records;
+    expect(builder.order).toHaveBeenCalledWith("normalized_project_name", { ascending: true, nullsFirst: false });
   });
 
   it("throws on query error", async () => {
     const client = createMockClient({
       from: {
-        lts_verification_queue: { data: null, error: { message: "timeout" }, count: null },
+        lts_records: { data: null, error: { message: "timeout" }, count: null },
       },
     });
 
-    await expect(getQueueItems(client)).rejects.toThrow("Queue query failed");
+    await expect(getLTSRecordItems(client)).rejects.toThrow("LTS records query failed");
   });
 });
 
@@ -399,8 +444,7 @@ describe("findProjectByName", () => {
     const nameMatch = { id: "p2", name: "Some Project", slug: "some-project" };
 
     const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
+    for (const method of CHAIN_METHODS) {
       builder[method] = vi.fn().mockReturnValue(builder);
     }
     builder.single = vi.fn().mockImplementation(() => {
@@ -424,8 +468,7 @@ describe("findProjectByName", () => {
 
   it("returns null when no match found", async () => {
     const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
+    for (const method of CHAIN_METHODS) {
       builder[method] = vi.fn().mockReturnValue(builder);
     }
     builder.single = vi.fn().mockResolvedValue({ data: null, error: null });
@@ -456,9 +499,9 @@ describe("findProjectByName", () => {
 
 describe("checkLTSNumber", () => {
   function createCheckClient(
-    queueData: unknown,
+    recordData: unknown,
     pltsData: unknown,
-    queueError: null | { message: string } = null,
+    recordError: null | { message: string } = null,
     pltsError: null | { message: string } = null
   ) {
     const builders: Record<string, ReturnType<typeof createMockBuilder>> = {};
@@ -466,8 +509,8 @@ describe("checkLTSNumber", () => {
     const client = {
       from: vi.fn((table: string) => {
         if (!builders[table]) {
-          if (table === "lts_verification_queue") {
-            builders[table] = createMockBuilder({ data: queueData, error: queueError });
+          if (table === "lts_records") {
+            builders[table] = createMockBuilder({ data: recordData, error: recordError });
           } else {
             builders[table] = createMockBuilder({ data: pltsData, error: pltsError });
           }
@@ -479,15 +522,15 @@ describe("checkLTSNumber", () => {
     return client;
   }
 
-  it("found in queue only", async () => {
-    const queueItem = { id: "q1", lts_number: "LTS-001" };
-    const client = createCheckClient(queueItem, null);
+  it("found in lts_records only", async () => {
+    const record = { lts_number: "LTS-001", normalized_project_name: "Test" };
+    const client = createCheckClient(record, null);
     const result = await checkLTSNumber(client, "LTS-001");
 
     expect(result.exists).toBe(true);
-    expect(result.inQueue).toBe(true);
+    expect(result.inLTSRecords).toBe(true);
     expect(result.inProjectLTS).toBe(false);
-    expect(result.queueItem).toEqual(queueItem);
+    expect(result.ltsRecord).toEqual(record);
     expect(result.projectLTS).toBeUndefined();
   });
 
@@ -497,20 +540,20 @@ describe("checkLTSNumber", () => {
     const result = await checkLTSNumber(client, "LTS-002");
 
     expect(result.exists).toBe(true);
-    expect(result.inQueue).toBe(false);
+    expect(result.inLTSRecords).toBe(false);
     expect(result.inProjectLTS).toBe(true);
-    expect(result.queueItem).toBeUndefined();
+    expect(result.ltsRecord).toBeUndefined();
     expect(result.projectLTS).toEqual(pltsItem);
   });
 
-  it("found in both queue and project_lts", async () => {
-    const queueItem = { id: "q1", lts_number: "LTS-003" };
+  it("found in both lts_records and project_lts", async () => {
+    const record = { lts_number: "LTS-003" };
     const pltsItem = { id: "pl1", lts_number: "LTS-003" };
-    const client = createCheckClient(queueItem, pltsItem);
+    const client = createCheckClient(record, pltsItem);
     const result = await checkLTSNumber(client, "LTS-003");
 
     expect(result.exists).toBe(true);
-    expect(result.inQueue).toBe(true);
+    expect(result.inLTSRecords).toBe(true);
     expect(result.inProjectLTS).toBe(true);
   });
 
@@ -519,9 +562,9 @@ describe("checkLTSNumber", () => {
     const result = await checkLTSNumber(client, "LTS-NONE");
 
     expect(result.exists).toBe(false);
-    expect(result.inQueue).toBe(false);
+    expect(result.inLTSRecords).toBe(false);
     expect(result.inProjectLTS).toBe(false);
-    expect(result.queueItem).toBeUndefined();
+    expect(result.ltsRecord).toBeUndefined();
     expect(result.projectLTS).toBeUndefined();
   });
 
@@ -533,9 +576,9 @@ describe("checkLTSNumber", () => {
     expect(builder.eq).toHaveBeenCalledWith("lts_number", "LTS-001");
   });
 
-  it("throws on queue check error", async () => {
+  it("throws on lts_records check error", async () => {
     const client = createCheckClient(null, null, { message: "db down" }, null);
-    await expect(checkLTSNumber(client, "LTS-001")).rejects.toThrow("Queue check failed");
+    await expect(checkLTSNumber(client, "LTS-001")).rejects.toThrow("LTS records check failed");
   });
 
   it("throws on project LTS check error", async () => {
@@ -547,106 +590,66 @@ describe("checkLTSNumber", () => {
 // -- getFilterValues() --
 
 describe("getFilterValues", () => {
-  it("returns deduplicated sorted regions", async () => {
-    const regionData = [
-      { scraped_region: "NCR" },
-      { scraped_region: "Region IV-A" },
-      { scraped_region: "NCR" },
-      { scraped_region: "Region III" },
-    ];
-
+  function createFilterClient(response: MockResponse) {
     const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
+    for (const method of CHAIN_METHODS) {
       builder[method] = vi.fn().mockReturnValue(builder);
     }
-    builder.then = (resolve: (val: MockResponse) => void) =>
-      resolve({ data: regionData, error: null });
+    builder.then = (resolve: (val: MockResponse) => void) => resolve(response);
 
     const client = {
       from: vi.fn(() => builder),
     } as unknown as import("../src/db/client").SupabaseClient;
 
+    return { client, builder };
+  }
+
+  it("returns deduplicated sorted regions", async () => {
+    const regionData = [
+      { normalized_region: "NCR" },
+      { normalized_region: "Region IV-A" },
+      { normalized_region: "NCR" },
+      { normalized_region: "Region III" },
+    ];
+
+    const { client } = createFilterClient({ data: regionData, error: null });
     const result = await getFilterValues(client);
     expect(result.regions).toEqual(["NCR", "Region III", "Region IV-A"]);
   });
 
   it("returns deduplicated sorted cities", async () => {
     const cityData = [
-      { scraped_city: "Makati" },
-      { scraped_city: "Taguig" },
-      { scraped_city: "Makati" },
+      { normalized_city: "Makati" },
+      { normalized_city: "Taguig" },
+      { normalized_city: "Makati" },
     ];
 
-    const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
-      builder[method] = vi.fn().mockReturnValue(builder);
-    }
-    builder.then = (resolve: (val: MockResponse) => void) =>
-      resolve({ data: cityData, error: null });
-
-    const client = {
-      from: vi.fn(() => builder),
-    } as unknown as import("../src/db/client").SupabaseClient;
-
+    const { client } = createFilterClient({ data: cityData, error: null });
     const result = await getFilterValues(client);
     expect(result.cities).toEqual(["Makati", "Taguig"]);
   });
 
   it("filters out null values", async () => {
     const data = [
-      { scraped_region: "NCR" },
-      { scraped_region: null },
-      { scraped_region: "Region III" },
+      { normalized_region: "NCR" },
+      { normalized_region: null },
+      { normalized_region: "Region III" },
     ];
 
-    const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
-      builder[method] = vi.fn().mockReturnValue(builder);
-    }
-    builder.then = (resolve: (val: MockResponse) => void) =>
-      resolve({ data, error: null });
-
-    const client = {
-      from: vi.fn(() => builder),
-    } as unknown as import("../src/db/client").SupabaseClient;
-
+    const { client } = createFilterClient({ data, error: null });
     const result = await getFilterValues(client);
     expect(result.regions).toEqual(["NCR", "Region III"]);
   });
 
-  it("applies region filter to cities query", async () => {
-    const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
-      builder[method] = vi.fn().mockReturnValue(builder);
-    }
-    builder.then = (resolve: (val: MockResponse) => void) =>
-      resolve({ data: [], error: null });
-
-    const client = {
-      from: vi.fn(() => builder),
-    } as unknown as import("../src/db/client").SupabaseClient;
+  it("applies region filter to cities query on normalized_region", async () => {
+    const { client, builder } = createFilterClient({ data: [], error: null });
 
     await getFilterValues(client, "NCR");
-    expect(builder.eq).toHaveBeenCalledWith("scraped_region", "NCR");
+    expect(builder.eq).toHaveBeenCalledWith("normalized_region", "NCR");
   });
 
   it("throws on regions query error", async () => {
-    const builder: Record<string, unknown> = {};
-    const chainMethods = ["select", "eq", "gt", "gte", "lte", "or", "ilike", "not", "order", "range", "limit"];
-    for (const method of chainMethods) {
-      builder[method] = vi.fn().mockReturnValue(builder);
-    }
-    builder.then = (resolve: (val: MockResponse) => void) =>
-      resolve({ data: null, error: { message: "fail" } });
-
-    const client = {
-      from: vi.fn(() => builder),
-    } as unknown as import("../src/db/client").SupabaseClient;
-
+    const { client } = createFilterClient({ data: null, error: { message: "fail" } });
     await expect(getFilterValues(client)).rejects.toThrow("query failed");
   });
 });

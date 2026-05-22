@@ -7,11 +7,11 @@ export function sanitizeFilterValue(value: string): string {
 }
 
 import type {
-  QueueItemRow,
+  LTSRecordRow,
   ProjectLTSWithComputed,
   ProjectRow,
   ProjectLTSRow,
-  VerificationStats,
+  LTSStatsResult,
   PaginatedResponse,
   StatsResponse,
 } from "../types";
@@ -19,7 +19,7 @@ import type {
 // -- lts_search --
 
 interface SearchResult {
-  queue: PaginatedResponse<QueueItemRow>;
+  records: PaginatedResponse<LTSRecordRow>;
   projects: PaginatedResponse<ProjectRow>;
 }
 
@@ -33,31 +33,22 @@ export async function search(
 
   if (!raw) {
     return {
-      queue: { items: [], total: 0, limit, offset, hasMore: false },
+      records: { items: [], total: 0, limit, offset, hasMore: false },
       projects: { items: [], total: 0, limit, offset, hasMore: false },
     };
   }
 
   const q = sanitizeFilterValue(raw);
-  const orFilter = `lts_number.ilike.%${q}%,scraped_project_name.ilike.%${q}%,scraped_developer.ilike.%${q}%`;
+  const orFilter = `lts_number.ilike.%${q}%,normalized_project_name.ilike.%${q}%,normalized_developer.ilike.%${q}%`;
   const projectOrFilter = `name.ilike.%${q}%,canonical_name.ilike.%${q}%,lts_number.ilike.%${q}%`;
 
-  const [queueRes, projectRes] = await Promise.all([
+  const [recordsRes, projectRes] = await Promise.all([
     client
-      .from("lts_verification_queue")
-      .select(
-        `
-        *,
-        projects:matched_project_id (
-          id, name, slug, city,
-          developers ( slug, name )
-        )
-      `,
-        { count: "exact" }
-      )
+      .from("lts_records")
+      .select("*", { count: "exact" })
+      .neq("confidence", "low")
       .or(orFilter)
-      .order("match_score", { ascending: false, nullsFirst: false })
-      .order("scraped_project_name", { ascending: true })
+      .order("normalized_project_name", { ascending: true })
       .range(offset, offset + limit - 1),
 
     client
@@ -79,16 +70,16 @@ export async function search(
       .range(offset, offset + limit - 1),
   ]);
 
-  if (queueRes.error) throw new Error(`Queue search failed: ${queueRes.error.message}`);
+  if (recordsRes.error) throw new Error(`Records search failed: ${recordsRes.error.message}`);
   if (projectRes.error) throw new Error(`Project search failed: ${projectRes.error.message}`);
 
   return {
-    queue: {
-      items: (queueRes.data ?? []) as QueueItemRow[],
-      total: queueRes.count ?? 0,
+    records: {
+      items: (recordsRes.data ?? []) as LTSRecordRow[],
+      total: recordsRes.count ?? 0,
       limit,
       offset,
-      hasMore: offset + limit < (queueRes.count ?? 0),
+      hasMore: offset + limit < (recordsRes.count ?? 0),
     },
     projects: {
       items: (projectRes.data ?? []) as ProjectRow[],
@@ -100,69 +91,64 @@ export async function search(
   };
 }
 
-// -- lts_queue --
+// -- lts_records (was lts_queue) --
 
-interface QueueFilters {
-  status?: string;
+interface RecordFilters {
+  confidence?: string;
+  linked?: boolean;
   region?: string;
-  minScore?: number;
   search?: string;
   expiringWithinDays?: number;
-  sortBy?: "match_score" | "scraped_expiry_date" | "created_at";
+  sortBy?: "expiry_date" | "created_at" | "normalized_project_name";
   sortOrder?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
 
-export async function getQueueItems(
+export async function getLTSRecordItems(
   client: SupabaseClient,
-  filters: QueueFilters = {}
-): Promise<PaginatedResponse<QueueItemRow>> {
+  filters: RecordFilters = {}
+): Promise<PaginatedResponse<LTSRecordRow>> {
   const {
     limit = 20,
     offset = 0,
-    sortBy = "match_score",
+    sortBy = "created_at",
     sortOrder = "desc",
   } = filters;
 
   let query = client
-    .from("lts_verification_queue")
-    .select("*", { count: "exact" });
+    .from("lts_records")
+    .select("*", { count: "exact" })
+    .neq("confidence", "low");
 
-  if (filters.status) query = query.eq("match_status", filters.status);
-  if (filters.region) query = query.eq("scraped_region", filters.region);
-  if (filters.minScore !== undefined) query = query.gte("match_score", filters.minScore);
+  if (filters.confidence) query = query.eq("confidence", filters.confidence);
+  if (filters.region) query = query.eq("normalized_region", filters.region);
+  if (filters.linked === true) query = query.not("project_id", "is", null);
+  if (filters.linked === false) query = query.is("project_id", null);
 
   if (filters.search) {
     const s = sanitizeFilterValue(filters.search.trim());
     query = query.or(
-      `scraped_project_name.ilike.%${s}%,lts_number.ilike.%${s}%,scraped_developer.ilike.%${s}%`
+      `normalized_project_name.ilike.%${s}%,lts_number.ilike.%${s}%,normalized_developer.ilike.%${s}%`
     );
   }
 
   if (filters.expiringWithinDays !== undefined) {
     const today = getTodayPH();
     const future = getFutureDatePH(filters.expiringWithinDays);
-    query = query.gte("scraped_expiry_date", today).lte("scraped_expiry_date", future);
+    query = query.gte("expiry_date", today).lte("expiry_date", future);
   }
 
   const ascending = sortOrder === "asc";
-  if (sortBy === "match_score") {
-    query = query.order("match_score", { ascending, nullsFirst: false });
-  } else if (sortBy === "scraped_expiry_date") {
-    query = query.order("scraped_expiry_date", { ascending, nullsFirst: false });
-  } else {
-    query = query.order("created_at", { ascending });
-  }
-
+  query = query.order(sortBy, { ascending, nullsFirst: false });
   query = query.range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
 
-  if (error) throw new Error(`Queue query failed: ${error.message}`);
+  if (error) throw new Error(`LTS records query failed: ${error.message}`);
 
   return {
-    items: (data ?? []) as QueueItemRow[],
+    items: (data ?? []) as LTSRecordRow[],
     total: count ?? 0,
     limit,
     offset,
@@ -278,14 +264,12 @@ export async function getStats(client: SupabaseClient): Promise<StatsResponse> {
   const today = getTodayPH();
   const thirtyDays = getFutureDatePH(30);
 
-  const [queueStats, totalRes, verifiedRes, expiredRes, _unverifiedRes, expiringRes, withLTSRes] =
+  const [ltsStats, totalRes, verifiedRes, expiredRes, expiringRes, withLTSRes] =
     await Promise.all([
-      client.rpc("get_lts_verification_stats"),
-
+      client.rpc("get_lts_stats"),
       client.from("project_lts").select("*", { count: "exact", head: true }),
       client.from("project_lts").select("*", { count: "exact", head: true }).eq("status", "verified"),
       client.from("project_lts").select("*", { count: "exact", head: true }).eq("status", "expired"),
-      client.from("project_lts").select("*", { count: "exact", head: true }).eq("status", "unverified"),
       client
         .from("project_lts")
         .select("*", { count: "exact", head: true })
@@ -299,12 +283,12 @@ export async function getStats(client: SupabaseClient): Promise<StatsResponse> {
         .gt("lts_count", 0),
     ]);
 
-  if (queueStats.error) throw new Error(`Queue stats failed: ${queueStats.error.message}`);
+  if (ltsStats.error) throw new Error(`LTS stats failed: ${ltsStats.error.message}`);
 
-  const qs = queueStats.data as VerificationStats;
+  const stats = (ltsStats.data?.[0] || ltsStats.data || {}) as LTSStatsResult;
 
   return {
-    queue: qs,
+    ltsRecords: stats,
     projects: {
       total: totalRes.count ?? 0,
       withLTS: withLTSRes.count ?? 0,
@@ -319,9 +303,9 @@ export async function getStats(client: SupabaseClient): Promise<StatsResponse> {
 
 interface CheckResult {
   exists: boolean;
-  inQueue: boolean;
+  inLTSRecords: boolean;
   inProjectLTS: boolean;
-  queueItem?: QueueItemRow;
+  ltsRecord?: LTSRecordRow;
   projectLTS?: ProjectLTSRow;
 }
 
@@ -331,9 +315,9 @@ export async function checkLTSNumber(
 ): Promise<CheckResult> {
   const num = ltsNumber.trim();
 
-  const [queueRes, pltsRes] = await Promise.all([
+  const [recordRes, pltsRes] = await Promise.all([
     client
-      .from("lts_verification_queue")
+      .from("lts_records")
       .select("*")
       .eq("lts_number", num)
       .maybeSingle(),
@@ -344,14 +328,14 @@ export async function checkLTSNumber(
       .maybeSingle(),
   ]);
 
-  if (queueRes.error) throw new Error(`Queue check failed: ${queueRes.error.message}`);
+  if (recordRes.error) throw new Error(`LTS records check failed: ${recordRes.error.message}`);
   if (pltsRes.error) throw new Error(`Project LTS check failed: ${pltsRes.error.message}`);
 
   return {
-    exists: !!(queueRes.data || pltsRes.data),
-    inQueue: !!queueRes.data,
+    exists: !!(recordRes.data || pltsRes.data),
+    inLTSRecords: !!recordRes.data,
     inProjectLTS: !!pltsRes.data,
-    queueItem: (queueRes.data as QueueItemRow) ?? undefined,
+    ltsRecord: (recordRes.data as LTSRecordRow) ?? undefined,
     projectLTS: (pltsRes.data as ProjectLTSRow) ?? undefined,
   };
 }
@@ -369,16 +353,16 @@ export async function getFilterValues(
 ): Promise<FilterValues> {
   const [regionsRes, citiesQuery] = await Promise.all([
     client
-      .from("lts_verification_queue")
-      .select("scraped_region")
-      .not("scraped_region", "is", null),
+      .from("lts_records")
+      .select("normalized_region")
+      .not("normalized_region", "is", null),
 
     (() => {
       let q = client
-        .from("lts_verification_queue")
-        .select("scraped_city")
-        .not("scraped_city", "is", null);
-      if (region) q = q.eq("scraped_region", region);
+        .from("lts_records")
+        .select("normalized_city")
+        .not("normalized_city", "is", null);
+      if (region) q = q.eq("normalized_region", region);
       return q;
     })(),
   ]);
@@ -389,7 +373,7 @@ export async function getFilterValues(
   const regions = [
     ...new Set(
       (regionsRes.data ?? [])
-        .map((r: Record<string, string | null>) => r.scraped_region)
+        .map((r: Record<string, string | null>) => r.normalized_region)
         .filter(Boolean) as string[]
     ),
   ].sort();
@@ -397,7 +381,7 @@ export async function getFilterValues(
   const cities = [
     ...new Set(
       (citiesQuery.data ?? [])
-        .map((r: Record<string, string | null>) => r.scraped_city)
+        .map((r: Record<string, string | null>) => r.normalized_city)
         .filter(Boolean) as string[]
     ),
   ].sort();
