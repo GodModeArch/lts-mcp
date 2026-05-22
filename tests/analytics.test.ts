@@ -679,19 +679,25 @@ describe("fetchFilteredRows", () => {
     expect(result.rows[0].expiry_date).toBe("2099-12-31");
   });
 
-  it("sets truncated=true when row limit is hit", async () => {
-    const rows = Array.from({ length: 10000 }, (_, i) => ({
-      lts_number: `LTS-${i}`,
-      raw_project_type: null,
-      expiry_date: "2099-12-31",
-    }));
-    const builder = createMockBuilder({ data: rows, error: null });
+  it("sets truncated=true when the MAX_ROWS ceiling is reached", async () => {
+    // Always return a full page so paging never short-circuits; the loop must
+    // stop at the MAX_ROWS ceiling (100k / 1k page = 100 range requests) and
+    // report truncation.
+    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ lts_number: `LTS-${i}` }));
+    const builder: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "gte", "lte", "order", "range"]) {
+      builder[method] = vi.fn().mockReturnValue(builder);
+    }
+    builder.then = (resolve: (val: { data: unknown; error: null }) => void) =>
+      resolve({ data: fullPage, error: null });
+
     const client = {
       from: vi.fn(() => builder),
     } as unknown as import("../src/db/client").SupabaseClient;
 
     const result = await fetchFilteredRows(client);
     expect(result.truncated).toBe(true);
+    expect((builder.range as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(100);
   });
 
   it("throws on query error", async () => {
