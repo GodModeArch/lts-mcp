@@ -101,9 +101,12 @@ export interface FetchFilters {
 // single page is never capped below what we ask for.
 const PAGE_SIZE = 1_000;
 // Hard ceiling on rows pulled into the Worker for client-side aggregation.
-// Crossing it sets truncated=true; the real fix at that scale is DB-side
-// aggregation rather than fetching everything.
-const MAX_ROWS = 100_000;
+// Sized to sit comfortably above the live table (~10k rows) with years of
+// headroom, while bounding worst-case heap use (~25k row objects, well under
+// the Worker's 128MB limit). Crossing it sets truncated=true; the real fix at
+// that scale is DB-side aggregation rather than fetching everything. Keep this
+// in sync with the "Capped at 25k rows" note in the tool descriptions.
+const MAX_ROWS = 25_000;
 
 export interface FetchResult {
   rows: AnalyticsRow[];
@@ -495,7 +498,7 @@ export async function aggregateExpiryRisk(
     ...filters,
     expiryFrom: today,
     expiryTo: futureDate,
-    // Keep the soonest-expiring rows if the window exceeds ROW_LIMIT.
+    // Keep the soonest-expiring rows if the window exceeds MAX_ROWS.
     orderBy: { column: "expiry_date", ascending: true },
   });
 

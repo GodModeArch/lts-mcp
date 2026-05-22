@@ -681,7 +681,7 @@ describe("fetchFilteredRows", () => {
 
   it("sets truncated=true when the MAX_ROWS ceiling is reached", async () => {
     // Always return a full page so paging never short-circuits; the loop must
-    // stop at the MAX_ROWS ceiling (100k / 1k page = 100 range requests) and
+    // stop at the MAX_ROWS ceiling (25k / 1k page = 25 range requests) and
     // report truncation.
     const fullPage = Array.from({ length: 1000 }, (_, i) => ({ lts_number: `LTS-${i}` }));
     const builder: Record<string, unknown> = {};
@@ -697,7 +697,7 @@ describe("fetchFilteredRows", () => {
 
     const result = await fetchFilteredRows(client);
     expect(result.truncated).toBe(true);
-    expect((builder.range as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(100);
+    expect((builder.range as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(25);
   });
 
   it("throws on query error", async () => {
