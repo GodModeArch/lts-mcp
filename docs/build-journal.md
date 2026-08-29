@@ -99,3 +99,19 @@ Verified rather than assumed: rewired `search()` to the pre-fix template, ran th
 Chose to assert on `builder.or.mock.calls[0][0]`, the real argument, then push it through the same PostgREST model the pure-function tests use. Alternative considered was asserting the builders are called, via a spy on the module, which proves the call happened but not that its result reaches the query. Under the same rewire the four new tests fail. The check was watched failing before it was kept.
 
 <!-- content: none -->
+
+### Challenge: the fix's load-bearing assumption could not be tested until it shipped
+The whole quoting approach rests on PostgREST rewriting `*` to `%` on the *quoted* value path, not just the unquoted one. If that were wrong, `*` would silently stop matching anything and the wildcard would be dead in production while every local test still passed. Premerge round 1 checked it against the PostgREST parser source (`pQuotedValue` discards the quote marker, `T.map star val` runs afterwards with no quoted/unquoted distinction) and round 2 flagged that source reading was all we had. It could not be confirmed live before deploy, because production was still running the unquoted code, so every probe up to that point exercised the old path.
+
+Fix: capture baselines on the old path, deploy, re-run the same calls, compare. Deployed 2026-08-29, version `46138faa`.
+
+| Call | Before | After |
+|---|---|---|
+| `query=**` | 8,401 records / 4,902 projects | 0 / 0 |
+| `query=zzqq,lts_number.neq.zzqq` (the N1 exploit) | 8,401 records | 0 |
+| `query=Merg*nt` | 5 records / 1 project | 5 / 1 |
+| `query=Land, Inc` | n/a | 755 records, Filinvest Land, Inc. |
+
+The third row is the one that mattered: unchanged means the `*` rewrite does happen on the quoted path and the wildcard survived the fix. The fourth is the other half of it, a legitimate comma in a developer name now searches instead of splitting the filter list. Blocking the injection alone would have been easy to get right by breaking commas entirely.
+
+<!-- content: blog -->
