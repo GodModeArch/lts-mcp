@@ -95,7 +95,9 @@ status from `expiry_date` against today, and split each bucket three ways.
 
 `unknown` is not `expired`. About half the DHSUD dataset carries no expiry date
 (4,325 of 8,401 records as of 2026-08-29), and folding those into `expired`
-overstated it 2.58x. The `status` filter accepts all three values.
+overstated it 2.58x. Only `lts_by_region` takes a `status` filter, and it accepts
+all three values; `lts_by_developer` and `lts_by_city` report the three-way split
+but cannot be filtered on it.
 
 ### Match Status Values (Queue)
 
