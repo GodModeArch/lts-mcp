@@ -123,3 +123,83 @@ Not covered by this verdict: the worktree has untracked files in the repo root
 `.vscode`, `.zprofile`, `.zshrc`), none of them ignored by `.gitignore`. No tracked file
 is modified, so the verdict covers the full tracked tree at `05809c1`. Worth ignoring or
 removing before any `git add -A`.
+
+## fix/null-expiry-status
+
+Exit checklist (written at round 1):
+- [x] preconditions green on the current head (`9a87ae4`), re-measured this round:
+  `npx vitest run` 232/232, `npx tsc --noEmit` clean. No linter configured; no build step
+  beyond `wrangler deploy` (which needs Node 22; this session ran the checks on Node 20.20.2).
+- [x] central behaviour has a check watched failing. Reverting the one line
+  `src/db/analytics.ts:42` to `return "expired"` fails 7 tests across `deriveStatus`, the
+  three aggregators and the status filter, each an assertion on the null case
+  (`expected 'expired' to be 'unknown'`, `expected 2 to be +0`, `expected [] to have a
+  length of 1`), not an import error. Restored clean, 232/232.
+- [x] no open critical or moderate shipped finding
+- [x] no open regression
+- [x] every commit inside some round's range (`9a87ae4` in round 1)
+
+| Round | Reviewed sha | Range | Verdict | Findings |
+|---|---|---|---|---|
+| 1 | `9a87ae4` | `main...9a87ae4` | SAFE TO MERGE | 0 blocking, 2 shipped minor, 1 gate minor |
+
+### Round 1 (`9a87ae4`)
+
+Blast radius checked: `deriveStatus` has exactly four callers (`fetchFilteredRows` and the
+three `*FromRows` aggregators), all in `src/db/analytics.ts`, all updated. `aggregateByLaw`,
+`aggregateTrends` and `aggregateExpiryRisk` never derived a status (`lts_expiry_risk` bounds
+`expiry_date` at the DB, so nulls were already excluded). `lts_stats` takes active/expired
+from the `get_lts_stats` RPC, whose live numbers (1,344 active / 2,732 expired against
+total_records 8,401) already excluded nulls from both buckets, so the fix moves the analytics
+tools towards `lts_stats` rather than away from it. `lts_records` and `lts_project` carry
+`project_lts` workflow status, a different field, untouched.
+
+1. **shipped / minor / new, filed not fixed.** `README.md:88-97` heads the new section
+   "Derived LTS Status (analytics tools)" over `lts_by_region`, `lts_by_developer` and
+   `lts_by_city`, then says "The `status` filter accepts all three values". Only
+   `lts_by_region` has a `status` parameter (`src/tools/analytics.ts:36`). The other two
+   return the `unknown` bucket but cannot be filtered on it, on this branch and on `main`.
+   A reader following the README calls `lts_by_city(status="unknown")` and gets a schema
+   rejection. One-line doc fix, or add `status: statusEnum` to both tools and wire it
+   through `aggregateByDeveloper`/`aggregateByCity`, whose filter types do not yet carry it.
+
+2. **shipped / minor / pre-existing, newly load-bearing.** The analytics population is
+   8,405 rows, not the 8,401 the README publishes. Measured live 2026-08-29: unfiltered
+   `lts_by_region` reports `total` 8,405 (regions sum to 8,405, active sums to 1,345),
+   while `lts_records` reports `total` 8,401 with `count: exact` and `lts_stats` reports
+   `total_records` 8,401 with `low_confidence` 0. Both counts read `lts_records`. Either
+   `fetchFilteredRows` repeats rows across `.range()` page boundaries (its sort key
+   `(issue_date, lts_number)` is only unique if `lts_number` really is unique), or the table
+   holds 4 rows with a null `confidence` that `getLTSRecordItems`' `.neq("confidence","low")`
+   drops and the RPC does not count. Not caused by this branch and unchanged by it, but the
+   branch publishes exact counts, so the `unknown` total the fixed tools report will be
+   measured against 8,405. Settle it with `lts_by_city?region=<R>` (single-page fetch) against
+   `lts_records?region=<R>` for the region carrying the gap.
+
+3. **gate / minor / new, filed not fixed.** Nothing tests `src/tools/`. Reverting
+   `statusEnum` (`src/tools/analytics.ts:22`) to `["active", "expired"]` leaves the suite
+   232/232 green *and* `tsc --noEmit` clean, because the narrower enum still assigns to the
+   wider `DerivedStatus` parameter. The only path by which a client can ask for
+   `status: "unknown"` therefore has no check of any kind. The behaviour underneath it is
+   covered (`fetchFilteredRows` has both filter tests), so this does not block; the missing
+   gate is a registration-layer test for `registerAnalyticsTools`, and the class is the whole
+   `src/tools/` directory, not this one enum.
+
+### Post-deploy verification (pending, for the builder)
+
+The fix is not deployed; the live tool schema still offers a two-value `status` enum.
+Baseline captured on the old code 2026-08-29, unfiltered `lts_by_region`:
+total 8,405, active 1,345, expired 7,060, `truncated` false.
+
+After deploy, on the same call: active must still be 1,345, `expired + unknown` must still be
+7,060, and `active + expired + unknown` must equal 8,405 per region and in total. Expect
+`unknown` near 4,325 (the journal's binary-search count over the 8,401-row `lts_records`
+path) and `expired` near 2,735, which is the `lts_stats` RPC's 2,732 on its own population.
+A mismatch of up to 4 rows is finding 2, not a defect in the fix. Also confirm
+`lts_by_region(status="unknown")` is accepted rather than rejected by the deployed schema,
+since finding 3 means no local check covers that.
+
+Not covered by this verdict: the worktree still has the untracked repo-root files listed
+under the previous branch (`.bashrc`, `.gitconfig`, `.gitmodules`, `.idea`, `.mcp.json`,
+`.profile`, `.ripgreprc`, `.vscode`, `.zprofile`, `.zshrc`), none ignored by `.gitignore`.
+No tracked file is modified, so the verdict covers the full tracked tree at `9a87ae4`.
