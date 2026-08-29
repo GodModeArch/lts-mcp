@@ -87,8 +87,10 @@ describe("deriveStatus", () => {
     expect(deriveStatus("2025-06-15", "2025-06-15")).toBe("active");
   });
 
-  it("returns expired for null expiry date", () => {
-    expect(deriveStatus(null, "2025-01-01")).toBe("expired");
+  it("returns unknown for null expiry date", () => {
+    // Regression: null used to derive "expired", which overstated the expired
+    // bucket 2.58x on every analytics tool. Absence of a date is not lapse.
+    expect(deriveStatus(null, "2025-01-01")).toBe("unknown");
   });
 });
 
@@ -216,14 +218,37 @@ describe("aggregateByRegionFromRows", () => {
     expect(result.regions[0].by_law).toEqual({ BP220: 1, PD957: 1, unknown: 1 });
   });
 
-  it("tracks active/expired split", () => {
+  it("tracks active/expired/unknown split", () => {
     const rows = [
       makeRow({ normalized_region: "NCR", expiry_date: "2099-12-31" }),
       makeRow({ normalized_region: "NCR", expiry_date: "2020-01-01" }),
+      makeRow({ normalized_region: "NCR", expiry_date: null }),
     ];
     const result = aggregateByRegionFromRows(rows, "2025-06-01");
     expect(result.regions[0].active).toBe(1);
     expect(result.regions[0].expired).toBe(1);
+    expect(result.regions[0].unknown).toBe(1);
+  });
+
+  it("does not count null-expiry rows as expired", () => {
+    const rows = [
+      makeRow({ normalized_region: "NCR", expiry_date: null }),
+      makeRow({ normalized_region: "NCR", expiry_date: null }),
+    ];
+    const result = aggregateByRegionFromRows(rows, "2025-06-01");
+    expect(result.regions[0].expired).toBe(0);
+    expect(result.regions[0].unknown).toBe(2);
+  });
+
+  it("keeps active + expired + unknown equal to the region count", () => {
+    const rows = [
+      makeRow({ normalized_region: "NCR", expiry_date: "2099-12-31" }),
+      makeRow({ normalized_region: "NCR", expiry_date: "2020-01-01" }),
+      makeRow({ normalized_region: "NCR", expiry_date: null }),
+      makeRow({ normalized_region: "NCR", expiry_date: null }),
+    ];
+    const r = aggregateByRegionFromRows(rows, "2025-06-01").regions[0];
+    expect(r.active + r.expired + r.unknown).toBe(r.count);
   });
 
   it("maps null region to Unknown", () => {
@@ -263,6 +288,20 @@ describe("aggregateByDeveloperFromRows", () => {
     expect(result.total).toBe(3);
     expect(result.developers[0].developer).toBe("DevA");
     expect(result.developers[0].regions).toEqual(["NCR", "Region III"]);
+  });
+
+  it("tracks active/expired/unknown split without counting nulls as expired", () => {
+    const rows = [
+      makeRow({ normalized_developer: "DevA", expiry_date: "2099-12-31" }),
+      makeRow({ normalized_developer: "DevA", expiry_date: "2020-01-01" }),
+      makeRow({ normalized_developer: "DevA", expiry_date: null }),
+      makeRow({ normalized_developer: "DevA", expiry_date: null }),
+    ];
+    const d = aggregateByDeveloperFromRows(rows, 25, "2025-06-01").developers[0];
+    expect(d.active).toBe(1);
+    expect(d.expired).toBe(1);
+    expect(d.unknown).toBe(2);
+    expect(d.active + d.expired + d.unknown).toBe(d.count);
   });
 
   it("applies limit", () => {
@@ -433,6 +472,20 @@ describe("aggregateByCityFromRows", () => {
     expect(result.cities[0].city).toBe("Makati");
     expect(result.cities[0].count).toBe(2);
     expect(result.cities[0].province).toBe("Metro Manila");
+  });
+
+  it("tracks active/expired/unknown split without counting nulls as expired", () => {
+    const rows = [
+      makeRow({ normalized_city: "Makati", expiry_date: "2099-12-31" }),
+      makeRow({ normalized_city: "Makati", expiry_date: "2020-01-01" }),
+      makeRow({ normalized_city: "Makati", expiry_date: null }),
+      makeRow({ normalized_city: "Makati", expiry_date: null }),
+    ];
+    const c = aggregateByCityFromRows(rows, 25, "2025-06-01").cities[0];
+    expect(c.active).toBe(1);
+    expect(c.expired).toBe(1);
+    expect(c.unknown).toBe(2);
+    expect(c.active + c.expired + c.unknown).toBe(c.count);
   });
 
   it("identifies top developer per city", () => {
@@ -677,6 +730,37 @@ describe("fetchFilteredRows", () => {
     const result = await fetchFilteredRows(client, { status: "active" });
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].expiry_date).toBe("2099-12-31");
+  });
+
+  it("excludes null-expiry rows from the expired status filter", async () => {
+    const rows = [
+      { expiry_date: "2020-01-01", raw_project_type: null },
+      { expiry_date: null, raw_project_type: null },
+    ];
+    const builder = createMockBuilder({ data: rows, error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    const result = await fetchFilteredRows(client, { status: "expired" });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].expiry_date).toBe("2020-01-01");
+  });
+
+  it("selects only null-expiry rows for the unknown status filter", async () => {
+    const rows = [
+      { expiry_date: "2020-01-01", raw_project_type: null },
+      { expiry_date: "2099-12-31", raw_project_type: null },
+      { expiry_date: null, raw_project_type: null },
+    ];
+    const builder = createMockBuilder({ data: rows, error: null });
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    const result = await fetchFilteredRows(client, { status: "unknown" });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].expiry_date).toBeNull();
   });
 
   it("sets truncated=true when the MAX_ROWS ceiling is reached", async () => {

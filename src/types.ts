@@ -145,6 +145,13 @@ export interface AnalyticsRow {
 
 export type NormalizedLaw = "BP220" | "PD957" | null;
 
+/**
+ * Status derived from expiry_date against today. "unknown" is its own bucket:
+ * a DHSUD record with no expiry date is not evidence of lapse, and folding it
+ * into "expired" overstated expired by 2.58x across every analytics tool.
+ */
+export type DerivedStatus = "active" | "expired" | "unknown";
+
 export interface LawBreakdown {
   BP220: number;
   PD957: number;
@@ -158,6 +165,7 @@ export interface ByRegionItem {
   by_law: LawBreakdown;
   active: number;
   expired: number;
+  unknown: number;
 }
 
 export interface ByRegionResponse {
@@ -174,6 +182,7 @@ export interface ByDeveloperItem {
   by_law: LawBreakdown;
   active: number;
   expired: number;
+  unknown: number;
 }
 
 export interface ByDeveloperResponse {
@@ -225,6 +234,7 @@ export interface ByCityItem {
   by_law: LawBreakdown;
   active: number;
   expired: number;
+  unknown: number;
   top_developer: string | null;
 }
 

@@ -126,3 +126,30 @@ Chose the third bucket, filterable. `deriveStatus` returns `"active" | "expired"
 Reason: the numbers are published and are currently wrong in a direction that reads as a data-quality story about DHSUD when it is actually ours. A bucket a consumer can query is also the fastest route to the upstream fix, since it names the 4,000-odd records that need an expiry date backfilled. Tradeoff accepted: the response shape changes for all six analytics tools, and `tests/analytics.test.ts:91` has to flip, which is the N9 signal that the test was written to describe the code rather than the requirement.
 
 <!-- content: blog -->
+
+### Challenge: the null-expiry population was half the dataset, not an edge case
+The decision entry above estimated the affected rows arithmetically ("roughly half", "4,000-odd") because the audit could only infer them: live `lts_by_region` reported active 1,345 / expired 7,060 against `lts_stats` reporting 1,344 active / 2,732 expired, and the gap was the null-expiry rows hiding inside `expired`. Nobody had counted them, and the local `.env` is an empty template, so there were no credentials to count them with.
+
+Counted them through the live endpoint instead. `getLTSRecordItems` orders with `nullsFirst: false`, so sorting by `expiry_date` puts every null at the end and the null count is just the table size minus the offset of the first null row. Binary search on `offset` with `limit: 1`: offset 4075 is the last non-null (`PLS LS-R8-00030`, expiry `3023-06-01`), offset 4076 is the first null (`LS 0001366`). So **4,325 of 8,401 records have no expiry date, 51.5%**. Three probes, no credentials needed.
+
+That lands exactly where the audit's arithmetic said it would: 7,060 reported expired minus ~4,325 nulls leaves ~2,735 real expired, against `lts_stats`' 2,732 on its slightly smaller population. 7,060 / 2,735 = 2.58x, to the digit.
+
+Fix: `deriveStatus` returns `"unknown"` for null expiry. The three aggregators count a third bucket, the `status` filter gained a third value, the three response-type pairs gained `unknown`, and `statusEnum` accepts it.
+
+<!-- content: blog -->
+
+### Challenge: the test asserted the bug, so it had to be watched failing first
+`tests/analytics.test.ts:91` asserted `deriveStatus(null, "2025-01-01") === "expired"`. A test that green-lights the defect is worse than no test: it makes the fix look like the regression. The flip was run against unmodified `main` before any source change, and the failure read `AssertionError: expected 'expired' to be 'unknown'`, an assertion on the null case, not a missing-symbol import error that would have proven nothing about behaviour.
+
+The same trap sits one layer up. The three aggregators had "tracks active/expired split" tests that never asserted a third bucket, so they would have stayed green through the entire change while silently covering nothing. Reverting the one-line `deriveStatus` change with the new tests in place fails 7 tests across all three aggregators, the status filter and the helper. Before the new tests, that same revert failed exactly 1.
+
+Fix: added null-expiry rows to each aggregator's split test, an invariant test that `active + expired + unknown === count`, and two filter tests covering that `status: "expired"` now excludes nulls and `status: "unknown"` selects exactly them.
+
+<!-- content: blog -->
+
+### Challenge: a licence expiring in the year 3023
+Offset 4075, the last non-null expiry in the whole table, is `PLS LS-R8-00030` with `raw_expiry_date: "1-Jun-3023"`, normalized faithfully to `3023-06-01`. It is an upstream DHSUD typo for 2023, and it currently derives as `active`.
+
+Fix: none. Out of scope for this branch and it is a single row, but it means `active` has a ceiling problem the same way `expired` had a floor problem: nothing validates that a derived-active expiry is within a plausible range. Logged so the next person does not rediscover it as a mystery.
+
+<!-- content: none -->
