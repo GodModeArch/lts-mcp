@@ -185,6 +185,16 @@ tools towards `lts_stats` rather than away from it. `lts_records` and `lts_proje
    gate is a registration-layer test for `registerAnalyticsTools`, and the class is the whole
    `src/tools/` directory, not this one enum.
 
+### Round 1 dispositions
+
+1. **Fixed** on `fix/readme-status-filter-scope`, doc-only. `README.md` now says only
+   `lts_by_region` takes a `status` filter and that the other two report the split without
+   filtering on it. No control to watch: the finding was a documented claim that contradicted
+   `src/tools/analytics.ts`, not a behaviour, and no code changed.
+2. **Deferred.** Pre-existing 8,405 vs 8,401 population gap. Re-read next round if
+   `fetchFilteredRows` or the paging changes; settle it with the region probe named above.
+3. **Filed**, here. No test covers `src/tools/`; the class is the directory, not the enum.
+
 ### Post-deploy verification (pending, for the builder)
 
 The fix is not deployed; the live tool schema still offers a two-value `status` enum.
