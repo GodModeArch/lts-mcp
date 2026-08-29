@@ -227,3 +227,28 @@ Not covered by this verdict: the worktree still has the untracked repo-root file
 under the previous branch (`.bashrc`, `.gitconfig`, `.gitmodules`, `.idea`, `.mcp.json`,
 `.profile`, `.ripgreprc`, `.vscode`, `.zprofile`, `.zshrc`), none ignored by `.gitignore`.
 No tracked file is modified, so the verdict covers the full tracked tree at `9a87ae4`.
+
+## Correction: the "untracked repo-root dotfiles" note is rejected (2026-08-29)
+
+Both `fix/postgrest-filter-injection` round 2 and `fix/null-expiry-status` round 1 close with
+a "not covered by this verdict" paragraph listing `.bashrc`, `.zshrc`, `.gitconfig`,
+`.gitmodules`, `.mcp.json`, `.idea`, `.vscode` and friends as untracked files in the repo root
+that `.gitignore` does not cover, and recommend ignoring or removing them before any
+`git add -A`.
+
+**Rejected. Those paths do not exist.** They are an artifact of the Bash sandbox the review
+sessions run in, which mounts `/dev/null` over dotfile paths so tooling cannot read a
+developer's shell config. Inside the sandbox they show as character devices
+(`crw-rw-rw- 1 nobody nogroup 1, 3`), and `git status` lists them as untracked because they
+are directory entries it does not recognise. Outside the sandbox `git status` is clean and
+every one of those paths is "No such file or directory".
+
+Kept rather than deleted because both rounds acted on it and the next reviewer will otherwise
+rediscover the same phantom. Two lessons worth carrying:
+
+- A review session's `git status` is not the repository's `git status`. Where a finding rests
+  on the presence or absence of a file, confirm it outside the sandbox before recording it.
+- Acting on it would have done real damage: `.gitmodules` and `.mcp.json` are legitimate
+  tracked-by-default project files, and blanket-ignoring them is a worse state than the one
+  the note was trying to fix.
+

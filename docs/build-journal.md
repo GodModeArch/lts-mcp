@@ -160,3 +160,10 @@ The obvious post-deploy check was "unknown should be about 4,325", the number th
 Reason: picked criteria the arithmetic forces instead. Active must not move at all (the fix only touches the null branch), `expired + unknown` must equal the old expired count to the row, and the three buckets must sum to `count` per region. Live after deploy: active 1,345 unchanged, expired 2,733 plus unknown 4,327 equals 7,060, exactly the pre-deploy expired. Tradeoff accepted: this does not confirm the absolute null count, which stays a filed question along with the 8,405 vs 8,401 population gap.
 
 <!-- content: blog -->
+
+### Challenge: two premerge rounds filed a finding about files that do not exist
+Both rounds ended by flagging untracked dotfiles in the repo root (`.bashrc`, `.gitconfig`, `.gitmodules`, `.mcp.json`, `.idea`, `.vscode`) as needing a `.gitignore` entry before anyone ran `git add -A`. The wrong assumption was that `git status` inside a review session shows the repository. It shows the repository as the sandbox presents it, and the sandbox mounts `/dev/null` over dotfile paths so tooling cannot read a developer's shell config. `ls -la` gave it away: every entry was a character device `1, 3`, owned by `nobody`, all with the same timestamp.
+
+Fix: none needed, which was the point. Outside the sandbox the tree is clean and none of those paths exist. The note is marked rejected in `docs/premerge-rounds.md` rather than deleted, since two rounds acted on it. Acting on it would have been worse than ignoring it: `.gitmodules` and `.mcp.json` are legitimate project files, and the recommended fix was to gitignore them.
+
+<!-- content: blog -->
