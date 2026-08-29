@@ -5,6 +5,7 @@ import {
   ilikeContainsTerm,
   buildRecordSearchFilter,
   buildProjectSearchFilter,
+  isUnboundedSearchTerm,
 } from "../src/db/queries";
 import { parseOrFilter, toLikePattern, ilikeMatches, matchesThroughFilter } from "./helpers/postgrest";
 
@@ -172,5 +173,42 @@ describe("ilikeContainsTerm", () => {
 
   it("puts the surrounding wildcards outside the escaped value", () => {
     expect(ilikeContainsTerm("lts_number", "100%")).toBe('lts_number.ilike."%100\\\\%%"');
+  });
+});
+
+describe("isUnboundedSearchTerm", () => {
+  /**
+   * `*` is the documented wildcard, and PostgREST rewrites it to % before
+   * Postgres sees it, so a term made only of wildcards reaches SQL as a pattern
+   * that matches every row. Escaping cannot close this: the rewrite discards
+   * the backslash first, so a literal * cannot be sent through ilike at all.
+   * The only place to stop it is the caller, before the filter is built.
+   */
+  it("flags a term that would match every row", () => {
+    for (const term of ["*", "**", "***", " * ", "\t*\n"]) {
+      expect(isUnboundedSearchTerm(term)).toBe(true);
+    }
+  });
+
+  it("flags a blank term", () => {
+    for (const term of ["", "   "]) {
+      expect(isUnboundedSearchTerm(term)).toBe(true);
+    }
+  });
+
+  it("does not flag a term with anything to match on", () => {
+    for (const term of ["Merg*nt", "*mergent", "a", "%", "_", "Land, Inc"]) {
+      expect(isUnboundedSearchTerm(term)).toBe(false);
+    }
+  });
+
+  it("is the guard the wildcard needs: a wildcard-only term matches anything at all", () => {
+    // Confirmed live on 2026-08-29 against production: lts_search?query=**
+    // returned records.total 8,401 and projects.total 4,902, the whole of both
+    // tables, from an unauthenticated endpoint.
+    const body = buildRecordSearchFilter("**");
+    expect(matchesThroughFilter(body, "normalized_project_name", "MERGENT")).toBe(true);
+    expect(matchesThroughFilter(body, "normalized_project_name", "BROOKLYN HOUSE")).toBe(true);
+    expect(matchesThroughFilter(body, "normalized_project_name", "")).toBe(true);
   });
 });

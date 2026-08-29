@@ -7,7 +7,7 @@ import {
   checkLTSNumber,
   getFilterValues,
 } from "../src/db/queries";
-import { parseOrFilter } from "./helpers/postgrest";
+import { parseOrFilter, matchesThroughFilter } from "./helpers/postgrest";
 
 // -- Mock Supabase Client (chainable builder pattern) --
 
@@ -676,5 +676,145 @@ describe("getFilterValues", () => {
   it("throws on regions query error", async () => {
     const { client } = createFilterClient({ data: null, error: { message: "fail" } });
     await expect(getFilterValues(client)).rejects.toThrow("query failed");
+  });
+});
+
+// -- what search() actually hands PostgREST --
+
+/**
+ * tests/sanitize.test.ts exercises the filter builders as pure functions. That
+ * leaves the wiring untested: rewiring search() back to a raw template string
+ * would keep every one of those tests green. These assert on the string the
+ * Supabase builder is really called with, for the exact path the audit
+ * live-exploited (docs/adversarial-audit-2026-08-29.md, N1).
+ */
+describe("search filter wiring", () => {
+  const searchClient = () =>
+    createMockClient({
+      from: {
+        lts_records: { data: [], error: null, count: 0 },
+        projects: { data: [], error: null, count: 0 },
+      },
+    });
+
+  const orBodyFor = (client: unknown, table: string): string =>
+    buildersOf(client)[table].or.mock.calls[0][0] as string;
+
+  it("sends lts_records a well-formed or= list over the three record columns", async () => {
+    const client = searchClient();
+    await search(client, "zzqq,normalized_region.neq.zzqq");
+
+    const terms = parseOrFilter(orBodyFor(client, "lts_records"));
+    expect(terms.map((t) => t.column)).toEqual([
+      "normalized_project_name",
+      "lts_number",
+      "normalized_developer",
+    ]);
+    expect(terms.every((t) => t.operator === "ilike")).toBe(true);
+    expect(terms.some((t) => t.column === "normalized_region")).toBe(false);
+  });
+
+  it("sends projects a well-formed or= list over the three project columns", async () => {
+    const client = searchClient();
+    await search(client, "zzqq,lts_number.neq.zzqq");
+
+    const terms = parseOrFilter(orBodyFor(client, "projects"));
+    expect(terms.map((t) => t.column)).toEqual(["name", "canonical_name", "lts_number"]);
+    expect(terms.every((t) => t.operator === "ilike")).toBe(true);
+  });
+
+  it("searches for the injection payload instead of executing it", async () => {
+    const payload = "zzqq,lts_number.neq.zzqq";
+    const client = searchClient();
+    await search(client, payload);
+
+    const body = orBodyFor(client, "lts_records");
+    expect(matchesThroughFilter(body, "lts_number", `LS 1 ${payload} X`)).toBe(true);
+    expect(matchesThroughFilter(body, "lts_number", "LS 0001210")).toBe(false);
+  });
+
+  it("does not break on a developer name containing a comma", async () => {
+    const client = searchClient();
+    await search(client, "Land, Inc");
+
+    const body = orBodyFor(client, "lts_records");
+    expect(() => parseOrFilter(body)).not.toThrow();
+    expect(matchesThroughFilter(body, "normalized_developer", "ALVEO LAND, INC.")).toBe(true);
+  });
+
+  it("keeps * working as the documented wildcard", async () => {
+    const client = searchClient();
+    await search(client, "Merg*nt");
+
+    const body = orBodyFor(client, "lts_records");
+    expect(matchesThroughFilter(body, "normalized_project_name", "MERGENT")).toBe(true);
+    expect(matchesThroughFilter(body, "normalized_project_name", "BROOKLYN HOUSE")).toBe(false);
+  });
+});
+
+// -- wildcard-only queries must not read the whole table --
+
+describe("unbounded search terms", () => {
+  /**
+   * Confirmed live on 2026-08-29 against production: lts_search?query=**
+   * returned all 8,401 records and all 4,902 projects. The * -> % rewrite
+   * happens inside PostgREST and cannot be escaped, so the caller has to
+   * refuse the term.
+   */
+  for (const term of ["*", "**", " ** "]) {
+    it(`search() returns nothing for ${JSON.stringify(term)} and never queries`, async () => {
+      const client = createMockClient({
+        from: {
+          lts_records: { data: [{ lts_number: "LTS-1" }], error: null, count: 8401 },
+          projects: { data: [{ id: "2" }], error: null, count: 4902 },
+        },
+      });
+
+      const result = await search(client, term);
+
+      expect(result.records.items).toEqual([]);
+      expect(result.records.total).toBe(0);
+      expect(result.projects.items).toEqual([]);
+      expect(result.projects.total).toBe(0);
+      expect(client.from).not.toHaveBeenCalled();
+    });
+
+    it(`getLTSRecordItems() returns nothing for search ${JSON.stringify(term)}`, async () => {
+      const client = createMockClient({
+        from: {
+          lts_records: { data: [{ lts_number: "LTS-1" }], error: null, count: 8401 },
+        },
+      });
+
+      const result = await getLTSRecordItems(client, { search: term });
+
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+      expect(client.from).not.toHaveBeenCalled();
+    });
+
+    it(`findProjectByName() returns null for ${JSON.stringify(term)}`, async () => {
+      const client = createMockClient({
+        from: {
+          projects: { data: { id: "1", name: "SOME PROJECT" }, error: null },
+        },
+      });
+
+      expect(await findProjectByName(client, term)).toBeNull();
+      expect(client.from).not.toHaveBeenCalled();
+    });
+  }
+
+  it("getLTSRecordItems() still browses unfiltered when no search is given", async () => {
+    const client = createMockClient({
+      from: {
+        lts_records: { data: [{ lts_number: "LTS-1" }], error: null, count: 8401 },
+      },
+    });
+
+    const result = await getLTSRecordItems(client, {});
+
+    expect(result.total).toBe(8401);
+    expect(buildersOf(client).lts_records.or).not.toHaveBeenCalled();
   });
 });

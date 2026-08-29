@@ -9,10 +9,27 @@ import { getTodayPH, getFutureDatePH } from "../utils";
  * `*` is deliberately not escaped. PostgREST rewrites * to % for the like and
  * ilike operators before the pattern reaches Postgres, and nothing survives that
  * rewrite, so a literal * cannot be sent through an ilike filter at all. It is
- * documented as the search wildcard instead.
+ * documented as the search wildcard instead, and callers gate it with
+ * isUnboundedSearchTerm so a wildcard-only term cannot read a whole table.
  */
 export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * True when a search term has nothing left to match on once the wildcard is
+ * taken out. `*` is the documented wildcard and PostgREST rewrites it to % for
+ * like/ilike, so `**` reaches Postgres as `%%%%` and returns every row.
+ * Escaping cannot close that: the rewrite runs after the backslash is
+ * discarded, so a literal * cannot be sent through an ilike filter at all. The
+ * caller is the only place left to refuse it.
+ *
+ * Confirmed live on 2026-08-29 against production: lts_search?query=** returned
+ * records.total 8,401 and projects.total 4,902, both whole tables, from an
+ * unauthenticated endpoint (docs/adversarial-audit-2026-08-29.md, N2).
+ */
+export function isUnboundedSearchTerm(value: string): boolean {
+  return value.replace(/\*/g, "").trim() === "";
 }
 
 /**
@@ -77,7 +94,7 @@ export async function search(
   const { limit = 20, offset = 0 } = options;
   const raw = query.trim();
 
-  if (!raw) {
+  if (isUnboundedSearchTerm(raw)) {
     return {
       records: { items: [], total: 0, limit, offset, hasMore: false },
       projects: { items: [], total: 0, limit, offset, hasMore: false },
@@ -160,6 +177,12 @@ export async function getLTSRecordItems(
     sortBy = "created_at",
     sortOrder = "desc",
   } = filters;
+
+  // A term that matches everything is not a filter. Returning the whole table
+  // for it would be the same unbounded read search() refuses.
+  if (filters.search !== undefined && filters.search !== "" && isUnboundedSearchTerm(filters.search)) {
+    return { items: [], total: 0, limit, offset, hasMore: false };
+  }
 
   let query = client
     .from("lts_records")
@@ -269,6 +292,10 @@ export async function findProjectByName(
   query: string
 ): Promise<ProjectRow | null> {
   const q = query.trim();
+
+  // `*` would reach the ilike below as %, so a wildcard-only name matches the
+  // first project in the table and returns it as an exact answer.
+  if (isUnboundedSearchTerm(q)) return null;
 
   const { data: slugMatch } = await client
     .from("projects")

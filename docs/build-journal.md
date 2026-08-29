@@ -81,3 +81,21 @@ Chose a third option. `tests/helpers/postgrest.ts` models the subset of the Post
 Tradeoff accepted: a model can drift from the real parser. It is still strictly better than the string assertion, because it is falsifiable and it names what it assumes. Live verification against the deployed Worker remains the final check.
 
 <!-- content: blog -->
+
+### Challenge: documenting a wildcard is not the same as bounding it
+Round 1 of premerge caught the previous entry claiming more than it delivered. Escaping `%` and `_` and promoting `*` to "the documented wildcard" closed two of the three leaks and renamed the third. `lts_search?query=**` still returned 8,401 records and 4,902 projects, the whole of both tables, from an unauthenticated endpoint. Identical numbers to the `%%` read the audit had recorded as the original finding. The commit subject said "and wildcard passthrough in search"; the passthrough was still there under a new name.
+
+The wrong assumption was that the fix was about which characters reach Postgres. It was never about the characters. It was about whether a caller can send a term that constrains nothing. Escaping cannot answer that, and for `*` escaping is not even available, since the rewrite discards the backslash before it runs.
+
+Fix: `isUnboundedSearchTerm` strips the wildcard and asks whether anything is left. Nothing left means the term is an empty search, and the three callers that take free text now treat it as one. `search()` returns empty without touching the client, `getLTSRecordItems()` returns an empty page rather than an unfiltered table, and `findProjectByName()` returns null instead of the first project in the table presented as an exact match. `*` still works as a wildcard everywhere it narrows something.
+
+<!-- content: blog -->
+
+### Decision: assert on the string the Supabase builder is actually called with
+Round 1's second finding: `search()`, the exact path the audit live-exploited, had no test asserting the filter it hands `.or()`. `tests/sanitize.test.ts` exercises the builders as pure functions and `tests/queries.test.ts` asserted the wiring only for `getLTSRecordItems`. Rewiring `search()` back to a raw template string left the whole suite green.
+
+Verified rather than assumed: rewired `search()` to the pre-fix template, ran the suite, and the 42 pure-function tests all passed. That is the gap.
+
+Chose to assert on `builder.or.mock.calls[0][0]`, the real argument, then push it through the same PostgREST model the pure-function tests use. Alternative considered was asserting the builders are called, via a spy on the module, which proves the call happened but not that its result reaches the query. Under the same rewire the four new tests fail. The check was watched failing before it was kept.
+
+<!-- content: none -->
