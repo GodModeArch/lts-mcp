@@ -7,6 +7,7 @@ import {
   checkLTSNumber,
   getFilterValues,
 } from "../src/db/queries";
+import { parseOrFilter } from "./helpers/postgrest";
 
 // -- Mock Supabase Client (chainable builder pattern) --
 
@@ -265,7 +266,7 @@ describe("getLTSRecordItems", () => {
     expect(builder.is).toHaveBeenCalledWith("project_id", null);
   });
 
-  it("applies search filter with sanitization", async () => {
+  it("sends a search term as one filter term per column, whatever it contains", async () => {
     const client = createMockClient({
       from: {
         lts_records: { data: [], error: null, count: 0 },
@@ -274,11 +275,21 @@ describe("getLTSRecordItems", () => {
 
     await getLTSRecordItems(client, { search: "test,inject" });
     const builder = buildersOf(client).lts_records;
-    // The comma in the search should be escaped
     expect(builder.or).toHaveBeenCalled();
+
+    // Asserting on how PostgREST parses the string, not on its shape. The
+    // assertion this replaces checked for a backslash before the comma and
+    // passed while the query was injectable in production. See
+    // docs/adversarial-audit-2026-08-29.md, N1 and N9.
     const orArg = (builder.or as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(orArg).toContain("test\\,inject");
-    expect(orArg).not.toContain("test,inject");
+    const terms = parseOrFilter(orArg);
+    expect(terms.map((t) => t.column)).toEqual([
+      "normalized_project_name",
+      "lts_number",
+      "normalized_developer",
+    ]);
+    expect(terms.every((t) => t.operator === "ilike")).toBe(true);
+    expect(terms.every((t) => t.value === "%test,inject%")).toBe(true);
   });
 
   it("sorts by created_at descending by default", async () => {
@@ -492,6 +503,20 @@ describe("findProjectByName", () => {
 
     await findProjectByName(client, "  Test  ");
     expect(builder.eq).toHaveBeenCalledWith("slug", "test");
+  });
+
+  it("escapes LIKE wildcards in the fuzzy name lookup", () => {
+    // .ilike() is its own query param, so a comma cannot split anything here,
+    // but % and _ still reach Postgres as wildcards if they are not escaped.
+    const builder = createMockBuilder({ data: null, error: null });
+
+    const client = {
+      from: vi.fn(() => builder),
+    } as unknown as import("../src/db/client").SupabaseClient;
+
+    return findProjectByName(client, "100% Homes_").then(() => {
+      expect(builder.ilike).toHaveBeenCalledWith("name", "%100\\% Homes\\_%");
+    });
   });
 });
 

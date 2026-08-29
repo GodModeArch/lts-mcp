@@ -11,7 +11,7 @@ export function registerReadTools(server: McpServer, client: SupabaseClient, met
     "lts_search",
     "Search across DHSUD LTS records and published projects by name, LTS number, developer, or city. Returns matches from both lts_records and published projects. Universal entry point for LTS data.",
     {
-      query: z.string().min(2).describe("Search term: project name, LTS number, developer name, or city"),
+      query: z.string().min(2).describe("Search term: project name, LTS number, developer name, or city. Matched as a literal substring; use * as a wildcard"),
       limit: z.number().int().positive().max(50).default(20).describe("Max results per category"),
       offset: z.number().int().min(0).default(0).describe("Pagination offset"),
     },
@@ -39,7 +39,7 @@ export function registerReadTools(server: McpServer, client: SupabaseClient, met
         .optional()
         .describe("true = linked to project, false = unlinked"),
       region: z.string().optional().describe("Filter by region (use lts_filters to get valid values)"),
-      search: z.string().optional().describe("Text search: project name, LTS number, or developer"),
+      search: z.string().optional().describe("Text search: project name, LTS number, or developer. Matched as a literal substring; use * as a wildcard"),
       expiringWithinDays: z
         .number()
         .int()
@@ -80,7 +80,7 @@ export function registerReadTools(server: McpServer, client: SupabaseClient, met
     "Get the complete LTS picture for a single project: all LTS records with computed fields (is_expired, days_until_expiry), summary counts, and the primary LTS number. Pass either a project UUID or a project name (fuzzy matched).",
     {
       projectId: z.string().uuid().optional().describe("Project UUID. Takes priority over projectName if both provided"),
-      projectName: z.string().optional().describe("Project name or slug for fuzzy lookup. Use when you don't have the UUID"),
+      projectName: z.string().optional().describe("Project name or slug for fuzzy lookup. Matched as a literal substring; use * as a wildcard. Use when you don't have the UUID"),
     },
     async ({ projectId, projectName }) => {
       try {
