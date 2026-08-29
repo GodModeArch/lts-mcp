@@ -138,8 +138,9 @@ export async function fetchFilteredRows(
     }
 
     if (filters.region) {
-      // .eq() values are sent literally by PostgREST; do not escape with
-      // sanitizeFilterValue (that is only for .or() filter strings).
+      // .eq() values are sent literally by PostgREST; they need neither
+      // escapeLikePattern nor quoteFilterValue (those are for ilike patterns
+      // and for values inside an or=() list).
       query = query.eq("normalized_region", filters.region);
     }
 

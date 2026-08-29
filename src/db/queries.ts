@@ -1,9 +1,72 @@
 import type { SupabaseClient } from "./client";
 import { getTodayPH, getFutureDatePH } from "../utils";
 
-/** Escape characters that PostgREST interprets as filter syntax inside .or() strings */
-export function sanitizeFilterValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/,/g, "\\,");
+/**
+ * Escape a value for use inside a SQL LIKE/ILIKE pattern. Postgres treats
+ * backslash as the escape character by default, so a prefixed % or _ is matched
+ * literally instead of acting as a wildcard.
+ *
+ * `*` is deliberately not escaped. PostgREST rewrites * to % for the like and
+ * ilike operators before the pattern reaches Postgres, and nothing survives that
+ * rewrite, so a literal * cannot be sent through an ilike filter at all. It is
+ * documented as the search wildcard instead, and callers gate it with
+ * isUnboundedSearchTerm so a wildcard-only term cannot read a whole table.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * True when a search term has nothing left to match on once the wildcard is
+ * taken out. `*` is the documented wildcard and PostgREST rewrites it to % for
+ * like/ilike, so `**` reaches Postgres as `%%%%` and returns every row.
+ * Escaping cannot close that: the rewrite runs after the backslash is
+ * discarded, so a literal * cannot be sent through an ilike filter at all. The
+ * caller is the only place left to refuse it.
+ *
+ * Confirmed live on 2026-08-29 against production: lts_search?query=** returned
+ * records.total 8,401 and projects.total 4,902, both whole tables, from an
+ * unauthenticated endpoint (docs/adversarial-audit-2026-08-29.md, N2).
+ */
+export function isUnboundedSearchTerm(value: string): boolean {
+  return value.replace(/\*/g, "").trim() === "";
+}
+
+/**
+ * Wrap a value in the double quotes PostgREST needs for any value inside an
+ * or=() list. Backslash escaping does not work outside quotes: the comma still
+ * delimits the list and the backslash is just a literal character. Inside
+ * quotes, backslash and double quote are the only characters that need escaping.
+ */
+export function quoteFilterValue(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Build one `column.ilike."%value%"` term for an or=() list. Single choke point
+ * so no call site can forget the quotes, which is how the injection this
+ * replaces got in (docs/adversarial-audit-2026-08-29.md, N1).
+ */
+export function ilikeContainsTerm(column: string, value: string): string {
+  return `${column}.ilike.${quoteFilterValue(`%${escapeLikePattern(value)}%`)}`;
+}
+
+/** The or=() body used to search lts_records by free text. */
+export function buildRecordSearchFilter(value: string): string {
+  return [
+    ilikeContainsTerm("normalized_project_name", value),
+    ilikeContainsTerm("lts_number", value),
+    ilikeContainsTerm("normalized_developer", value),
+  ].join(",");
+}
+
+/** The or=() body used to search projects by free text. */
+export function buildProjectSearchFilter(value: string): string {
+  return [
+    ilikeContainsTerm("name", value),
+    ilikeContainsTerm("canonical_name", value),
+    ilikeContainsTerm("lts_number", value),
+  ].join(",");
 }
 
 import type {
@@ -31,16 +94,15 @@ export async function search(
   const { limit = 20, offset = 0 } = options;
   const raw = query.trim();
 
-  if (!raw) {
+  if (isUnboundedSearchTerm(raw)) {
     return {
       records: { items: [], total: 0, limit, offset, hasMore: false },
       projects: { items: [], total: 0, limit, offset, hasMore: false },
     };
   }
 
-  const q = sanitizeFilterValue(raw);
-  const orFilter = `lts_number.ilike.%${q}%,normalized_project_name.ilike.%${q}%,normalized_developer.ilike.%${q}%`;
-  const projectOrFilter = `name.ilike.%${q}%,canonical_name.ilike.%${q}%,lts_number.ilike.%${q}%`;
+  const orFilter = buildRecordSearchFilter(raw);
+  const projectOrFilter = buildProjectSearchFilter(raw);
 
   const [recordsRes, projectRes] = await Promise.all([
     client
@@ -116,6 +178,12 @@ export async function getLTSRecordItems(
     sortOrder = "desc",
   } = filters;
 
+  // A term that matches everything is not a filter. Returning the whole table
+  // for it would be the same unbounded read search() refuses.
+  if (filters.search !== undefined && filters.search !== "" && isUnboundedSearchTerm(filters.search)) {
+    return { items: [], total: 0, limit, offset, hasMore: false };
+  }
+
   let query = client
     .from("lts_records")
     .select("*", { count: "exact" })
@@ -127,10 +195,7 @@ export async function getLTSRecordItems(
   if (filters.linked === false) query = query.is("project_id", null);
 
   if (filters.search) {
-    const s = sanitizeFilterValue(filters.search.trim());
-    query = query.or(
-      `normalized_project_name.ilike.%${s}%,lts_number.ilike.%${s}%,normalized_developer.ilike.%${s}%`
-    );
+    query = query.or(buildRecordSearchFilter(filters.search.trim()));
   }
 
   if (filters.expiringWithinDays !== undefined) {
@@ -228,6 +293,10 @@ export async function findProjectByName(
 ): Promise<ProjectRow | null> {
   const q = query.trim();
 
+  // `*` would reach the ilike below as %, so a wildcard-only name matches the
+  // first project in the table and returns it as an exact answer.
+  if (isUnboundedSearchTerm(q)) return null;
+
   const { data: slugMatch } = await client
     .from("projects")
     .select(
@@ -249,7 +318,10 @@ export async function findProjectByName(
        lts_status, lts_count, active_lts_count,
        developers ( name, slug )`
     )
-    .ilike("name", `%${q}%`)
+    // A standalone filter param is not an or=() list, so the comma is not a
+    // delimiter here and the value needs no quoting. The LIKE wildcards in it
+    // still reach Postgres, so they still need escaping.
+    .ilike("name", `%${escapeLikePattern(q)}%`)
     .eq("publish_status", "published")
     .gt("lts_count", 0)
     .limit(1)
