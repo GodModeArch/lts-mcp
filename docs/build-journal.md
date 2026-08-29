@@ -153,3 +153,10 @@ Offset 4075, the last non-null expiry in the whole table, is `PLS LS-R8-00030` w
 Fix: none. Out of scope for this branch and it is a single row, but it means `active` has a ceiling problem the same way `expired` had a floor problem: nothing validates that a derived-active expiry is within a plausible range. Logged so the next person does not rediscover it as a mystery.
 
 <!-- content: none -->
+
+### Decision: verify the null-expiry fix by an invariant, not by the predicted count
+The obvious post-deploy check was "unknown should be about 4,325", the number the binary search produced. That check would have been noise: the analytics tools read 8,405 rows while `lts_records` and the `get_lts_stats` RPC both report 8,401 on the same table, so the predicted count could never land exactly and a 2-row miss would read as a defect in the fix.
+
+Reason: picked criteria the arithmetic forces instead. Active must not move at all (the fix only touches the null branch), `expired + unknown` must equal the old expired count to the row, and the three buckets must sum to `count` per region. Live after deploy: active 1,345 unchanged, expired 2,733 plus unknown 4,327 equals 7,060, exactly the pre-deploy expired. Tradeoff accepted: this does not confirm the absolute null count, which stays a filed question along with the 8,405 vs 8,401 population gap.
+
+<!-- content: blog -->

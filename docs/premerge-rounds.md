@@ -195,7 +195,7 @@ tools towards `lts_stats` rather than away from it. `lts_records` and `lts_proje
    `fetchFilteredRows` or the paging changes; settle it with the region probe named above.
 3. **Filed**, here. No test covers `src/tools/`; the class is the directory, not the enum.
 
-### Post-deploy verification (pending, for the builder)
+### Post-deploy verification (closed 2026-08-29)
 
 The fix is not deployed; the live tool schema still offers a two-value `status` enum.
 Baseline captured on the old code 2026-08-29, unfiltered `lts_by_region`:
@@ -208,6 +208,20 @@ path) and `expired` near 2,735, which is the `lts_stats` RPC's 2,732 on its own 
 A mismatch of up to 4 rows is finding 2, not a defect in the fix. Also confirm
 `lts_by_region(status="unknown")` is accepted rather than rejected by the deployed schema,
 since finding 3 means no local check covers that.
+
+**Closed 2026-08-29 on deploy** (Worker version `d9fa2d00-1e64-49fd-8e25-f754ac96ba8d`,
+deployed from `aa4a819` on Node 22.22.1). Unfiltered `lts_by_region` now returns total 8,405,
+active 1,345, expired 2,733, unknown 4,327. Every criterion holds: active is unchanged from
+the pre-deploy 1,345, `expired + unknown` is 7,060 to the row, and
+`active + expired + unknown` equals `count` per region and 8,405 in total. Expired 2,733
+lands one row from the `lts_stats` RPC's 2,732 on its own population, and unknown 4,327 lands
+two rows from the journal's 4,325, both inside the 4-row gap of finding 2. The 2.58x
+overstatement is closed: 7,060 reported expired against 2,733 actual.
+
+`lts_by_region(status="unknown")` is accepted by the deployed schema and returns 4,327 rows
+with active 0 and expired 0 in every region, matching the unfiltered `unknown` column region
+by region. That is the path finding 3 says has no local check; it is now verified live once,
+which does not replace the missing registration-layer test.
 
 Not covered by this verdict: the worktree still has the untracked repo-root files listed
 under the previous branch (`.bashrc`, `.gitconfig`, `.gitmodules`, `.idea`, `.mcp.json`,
