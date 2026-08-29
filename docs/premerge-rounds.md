@@ -113,6 +113,11 @@ does not re-derive them.
    - `lts_search?query=**` -> records total 8,401, projects total 4,902 (still exposed;
      the fix is undeployed, and this is what should become 0 and 0)
 
+   **Closed 2026-08-29 on deploy** (version `46138faa`). `**` returned 0 and 0, the N1
+   injection payload `zzqq,lts_number.neq.zzqq` returned 0, and `Merg*nt` returned 5 and 1,
+   identical to the pre-deploy baseline. The quoted-path `*` rewrite holds. `Land, Inc`
+   returns 755 records, so a legitimate comma searches rather than splitting the filter.
+
 Not covered by this verdict: the worktree has untracked files in the repo root
 (`.bashrc`, `.gitconfig`, `.gitmodules`, `.idea`, `.mcp.json`, `.profile`, `.ripgreprc`,
 `.vscode`, `.zprofile`, `.zshrc`), none of them ignored by `.gitignore`. No tracked file
