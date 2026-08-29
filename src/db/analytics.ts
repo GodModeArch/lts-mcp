@@ -2,6 +2,7 @@ import type { SupabaseClient } from "./client";
 import { getTodayPH, getFutureDatePH } from "../utils";
 import type {
   AnalyticsRow,
+  DerivedStatus,
   NormalizedLaw,
   LawBreakdown,
   ByRegionResponse,
@@ -32,9 +33,13 @@ export function normalizeLaw(raw: string | null): NormalizedLaw {
   return null;
 }
 
-/** Null expiry = expired. DHSUD records without an expiry date are treated as lapsed. */
-export function deriveStatus(expiryDate: string | null, today: string): "active" | "expired" {
-  if (!expiryDate) return "expired";
+/**
+ * Null expiry = "unknown", not "expired". A DHSUD record with no expiry date
+ * says nothing about whether the licence lapsed, and counting those rows as
+ * expired overstated the expired bucket by 2.58x on every analytics tool.
+ */
+export function deriveStatus(expiryDate: string | null, today: string): DerivedStatus {
+  if (!expiryDate) return "unknown";
   return expiryDate >= today ? "active" : "expired";
 }
 
@@ -85,7 +90,7 @@ export interface FetchFilters {
   to_year?: number;
   region?: string;
   law?: NormalizedLaw;
-  status?: "active" | "expired";
+  status?: DerivedStatus;
   expiryFrom?: string;
   expiryTo?: string;
   /**
@@ -183,6 +188,8 @@ export async function fetchFilteredRows(
     rows = rows.filter((r) => normalizeLaw(r.raw_project_type) === filters.law);
   }
 
+  // Three-way: "expired" no longer sweeps in null-expiry rows, and "unknown"
+  // selects exactly those rows.
   if (filters.status) {
     const today = getTodayPH();
     rows = rows.filter((r) => deriveStatus(r.expiry_date, today) === filters.status);
@@ -195,26 +202,28 @@ export async function fetchFilteredRows(
 
 export async function aggregateByRegion(
   client: SupabaseClient,
-  filters: { year?: number; law?: NormalizedLaw; status?: "active" | "expired" } = {}
+  filters: { year?: number; law?: NormalizedLaw; status?: DerivedStatus } = {}
 ): Promise<ByRegionResponse> {
   const { rows, truncated } = await fetchFilteredRows(client, filters);
   return { ...aggregateByRegionFromRows(rows, getTodayPH()), truncated };
 }
 
 export function aggregateByRegionFromRows(rows: AnalyticsRow[], today: string): Omit<ByRegionResponse, "truncated"> {
-  const map = new Map<string, { count: number; by_law: LawBreakdown; active: number; expired: number }>();
+  const map = new Map<string, { count: number; by_law: LawBreakdown; active: number; expired: number; unknown: number }>();
 
   for (const row of rows) {
     const region = row.normalized_region ?? "Unknown";
     let bucket = map.get(region);
     if (!bucket) {
-      bucket = { count: 0, by_law: emptyLawBreakdown(), active: 0, expired: 0 };
+      bucket = { count: 0, by_law: emptyLawBreakdown(), active: 0, expired: 0, unknown: 0 };
       map.set(region, bucket);
     }
     bucket.count++;
     incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
-    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
-    else bucket.expired++;
+    const status = deriveStatus(row.expiry_date, today);
+    if (status === "active") bucket.active++;
+    else if (status === "expired") bucket.expired++;
+    else bucket.unknown++;
   }
 
   const total = rows.length;
@@ -226,6 +235,7 @@ export function aggregateByRegionFromRows(rows: AnalyticsRow[], today: string): 
       by_law: b.by_law,
       active: b.active,
       expired: b.expired,
+      unknown: b.unknown,
     }))
     .sort((a, b) => b.count - a.count);
 
@@ -244,21 +254,23 @@ export async function aggregateByDeveloper(
 export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number, today: string): Omit<ByDeveloperResponse, "truncated"> {
   const map = new Map<
     string,
-    { count: number; regions: Set<string>; by_law: LawBreakdown; active: number; expired: number }
+    { count: number; regions: Set<string>; by_law: LawBreakdown; active: number; expired: number; unknown: number }
   >();
 
   for (const row of rows) {
     const dev = row.normalized_developer ?? "Unknown";
     let bucket = map.get(dev);
     if (!bucket) {
-      bucket = { count: 0, regions: new Set(), by_law: emptyLawBreakdown(), active: 0, expired: 0 };
+      bucket = { count: 0, regions: new Set(), by_law: emptyLawBreakdown(), active: 0, expired: 0, unknown: 0 };
       map.set(dev, bucket);
     }
     bucket.count++;
     if (row.normalized_region) bucket.regions.add(row.normalized_region);
     incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
-    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
-    else bucket.expired++;
+    const status = deriveStatus(row.expiry_date, today);
+    if (status === "active") bucket.active++;
+    else if (status === "expired") bucket.expired++;
+    else bucket.unknown++;
   }
 
   const total = rows.length;
@@ -271,6 +283,7 @@ export function aggregateByDeveloperFromRows(rows: AnalyticsRow[], limit: number
       by_law: b.by_law,
       active: b.active,
       expired: b.expired,
+      unknown: b.unknown,
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, limit);
@@ -428,6 +441,7 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
       by_law: LawBreakdown;
       active: number;
       expired: number;
+      unknown: number;
       devCounts: Map<string, number>;
     }
   >();
@@ -446,14 +460,17 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
         by_law: emptyLawBreakdown(),
         active: 0,
         expired: 0,
+        unknown: 0,
         devCounts: new Map(),
       };
       map.set(key, bucket);
     }
     bucket.count++;
     incrementLaw(bucket.by_law, normalizeLaw(row.raw_project_type));
-    if (deriveStatus(row.expiry_date, today) === "active") bucket.active++;
-    else bucket.expired++;
+    const status = deriveStatus(row.expiry_date, today);
+    if (status === "active") bucket.active++;
+    else if (status === "expired") bucket.expired++;
+    else bucket.unknown++;
     const dev = row.normalized_developer ?? "Unknown";
     bucket.devCounts.set(dev, (bucket.devCounts.get(dev) ?? 0) + 1);
   }
@@ -478,6 +495,7 @@ export function aggregateByCityFromRows(rows: AnalyticsRow[], limit: number, tod
         by_law: b.by_law,
         active: b.active,
         expired: b.expired,
+        unknown: b.unknown,
         top_developer: topDev,
       };
     })

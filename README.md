@@ -79,6 +79,24 @@ Tools that return lists (`lts_search`, `lts_queue`) use a standard pagination wr
 | `expired` | LTS past its expiry date |
 | `none` | Project has no LTS on record |
 
+These are workflow states on `project_lts`, set by the verification process.
+They are not derived from dates.
+
+### Derived LTS Status (analytics tools)
+
+The analytics tools (`lts_by_region`, `lts_by_developer`, `lts_by_city`) derive
+status from `expiry_date` against today, and split each bucket three ways.
+
+| Status | Meaning |
+|--------|---------|
+| `active` | `expiry_date` >= today |
+| `expired` | `expiry_date` < today |
+| `unknown` | No expiry date on record |
+
+`unknown` is not `expired`. About half the DHSUD dataset carries no expiry date
+(4,325 of 8,401 records as of 2026-08-29), and folding those into `expired`
+overstated it 2.58x. The `status` filter accepts all three values.
+
 ### Match Status Values (Queue)
 
 | Status | Meaning |
