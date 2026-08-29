@@ -115,3 +115,14 @@ Fix: capture baselines on the old path, deploy, re-run the same calls, compare. 
 The third row is the one that mattered: unchanged means the `*` rewrite does happen on the quoted path and the wildcard survived the fix. The fourth is the other half of it, a legitimate comma in a developer name now searches instead of splitting the filter list. Blocking the injection alone would have been easy to get right by breaking commas entirely.
 
 <!-- content: blog -->
+
+### Decision: null expiry becomes a third status, not a re-labelled expired
+Audit finding #1: `deriveStatus` (`src/db/analytics.ts:36`) returns `"expired"` for a null expiry date, with a comment calling it deliberate and `tests/analytics.test.ts:91` asserting it. Live, that overstates expired by 2.58x across every analytics tool, and roughly half the dataset has no expiry date, so this is not an edge case being tidied away.
+
+Alternatives considered. Keep two buckets and drop null-expiry rows out of both, surfacing `no_expiry_date` as a sibling of `total`: least disruptive to anyone reading `active`/`expired` today, but it hides the population inside a field nobody filters on. Add the third bucket to responses but leave the `status` filter at two values: smaller public API change, but a consumer can then see 823 unknown records and have no way to ask for them.
+
+Chose the third bucket, filterable. `deriveStatus` returns `"active" | "expired" | "unknown"`, every `active`/`expired` pair in the response types gains `unknown`, and `statusEnum` accepts it.
+
+Reason: the numbers are published and are currently wrong in a direction that reads as a data-quality story about DHSUD when it is actually ours. A bucket a consumer can query is also the fastest route to the upstream fix, since it names the 4,000-odd records that need an expiry date backfilled. Tradeoff accepted: the response shape changes for all six analytics tools, and `tests/analytics.test.ts:91` has to flip, which is the N9 signal that the test was written to describe the code rather than the requirement.
+
+<!-- content: blog -->
